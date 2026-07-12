@@ -17,6 +17,7 @@
       <a href="/test/setup"><span class="icon">&#9654;</span> Take Test</a>
       <a href="/analytics"><span class="icon">&#9733;</span> Analytics</a>
       <a href="/errorlog"><span class="icon">&#9888;</span> Error Log</a>
+      <a href="/logout" class="nav-logout" style="margin-top:auto;color:#c04040"><span class="icon">&#8592;</span> Logout</a>
     </nav>
   </aside>
 
@@ -131,7 +132,16 @@
 
       currentIdx = idx;
       document.getElementById('q-num').textContent = q.index + 1;
-      document.getElementById('q-meta').innerHTML = `<strong>Topic:</strong> ${q.topic} &middot; <span class="badge badge-muted">${q.difficulty}</span>`;
+      const qMeta = document.getElementById('q-meta');
+      qMeta.textContent = '';
+      const topicLabel = document.createElement('strong');
+      topicLabel.textContent = 'Topic: ';
+      qMeta.appendChild(topicLabel);
+      qMeta.appendChild(document.createTextNode((q.topic || '') + ' · '));
+      const diffBadge = document.createElement('span');
+      diffBadge.className = 'badge badge-muted';
+      diffBadge.textContent = q.difficulty || '';
+      qMeta.appendChild(diffBadge);
       document.getElementById('q-text').textContent = q.text;
       document.getElementById('progress-bar').style.width = ((q.index + 1) / q.total * 100) + '%';
 
@@ -140,15 +150,21 @@
       const navBtn = document.getElementById(`nav-${q.index}`);
       if (navBtn) navBtn.classList.add('current');
 
-      // Render options
+      // Render options (build with DOM APIs to avoid XSS via option text)
       const labels = ['A', 'B', 'C', 'D'];
-      let optsHtml = '';
+      const optsList = document.getElementById('options-list');
+      optsList.textContent = '';
       q.options.forEach((opt, i) => {
-        optsHtml += `<button class="btn-option" onclick="submitAnswer('${labels[i]}')" id="opt-${i}">
-          <strong>${labels[i]}.</strong> ${opt}
-        </button>`;
+        const btn = document.createElement('button');
+        btn.className = 'btn-option';
+        btn.id = 'opt-' + i;
+        btn.addEventListener('click', () => submitAnswer(labels[i]));
+        const lbl = document.createElement('strong');
+        lbl.textContent = labels[i] + '. ';
+        btn.appendChild(lbl);
+        btn.appendChild(document.createTextNode(opt || ''));
+        optsList.appendChild(btn);
       });
-      document.getElementById('options-list').innerHTML = optsHtml;
 
       // Clear feedback
       document.getElementById('feedback-area').innerHTML = '';
@@ -235,24 +251,43 @@
         if (i === selectedIdx && !ans.isCorrect) btn.classList.add('wrong');
       });
 
-      // Show feedback
+      // Show feedback (build with DOM APIs to avoid XSS via explanation text)
       const fb = document.getElementById('feedback-area');
-      const explHtml = explanation ? `<div class="explanation">${explanation}</div>` : '';
-      if (ans.isCorrect) {
-        fb.innerHTML = `<div class="feedback-panel correct">
-          <strong>&#10003; Correct!</strong>${explHtml}
-        </div>`;
-      } else {
-        fb.innerHTML = `<div class="feedback-panel wrong">
-          <strong>&#10007; Wrong!</strong> Correct answer: <strong>${ans.correct}</strong>${explHtml}
-        </div>`;
+      fb.textContent = '';
+      const panel = document.createElement('div');
+      panel.className = 'feedback-panel ' + (ans.isCorrect ? 'correct' : 'wrong');
+      const head = document.createElement('strong');
+      head.textContent = ans.isCorrect ? '✓ Correct!' : '✗ Wrong!';
+      panel.appendChild(head);
+      if (!ans.isCorrect) {
+        panel.appendChild(document.createTextNode(' Correct answer: '));
+        const ansStrong = document.createElement('strong');
+        ansStrong.textContent = ans.correct;
+        panel.appendChild(ansStrong);
       }
+      if (explanation) {
+        const expl = document.createElement('div');
+        expl.className = 'explanation';
+        expl.textContent = explanation;
+        panel.appendChild(expl);
+      }
+      fb.appendChild(panel);
 
-      // Show Next / Finish button
+      // Show Next / Finish button (built with DOM APIs)
+      const actions = document.getElementById('action-buttons');
+      actions.textContent = '';
       const isLast = idx >= TOTAL - 1;
-      document.getElementById('action-buttons').innerHTML = isLast
-        ? `<button class="btn btn-danger" onclick="finishTest()">Finish Test &#9654;</button>`
-        : `<button class="btn btn-primary" onclick="goToQuestion(${idx + 1})">Next Question &#9654;</button>`;
+      const btn = document.createElement('button');
+      if (isLast) {
+        btn.className = 'btn btn-danger';
+        btn.textContent = 'Finish Test ▶';
+        btn.addEventListener('click', finishTest);
+      } else {
+        btn.className = 'btn btn-primary';
+        btn.textContent = 'Next Question ▶';
+        btn.addEventListener('click', () => goToQuestion(idx + 1));
+      }
+      actions.appendChild(btn);
     }
 
     function goToQuestion(idx) {

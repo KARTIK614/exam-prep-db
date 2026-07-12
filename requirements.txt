@@ -1,6 +1,6 @@
-Flask>=3.0
-Werkzeug>=3.0
-gunicorn
-requests
-flask-session
-pyjwt
+Flask>=3.0,<4.0
+Werkzeug>=3.0,<4.0
+gunicorn>=21.0
+requests>=2.31,<3.0
+flask-session>=0.8,<1.0
+pyjwt>=2.7,<3.0

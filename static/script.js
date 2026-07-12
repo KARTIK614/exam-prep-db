@@ -2,6 +2,18 @@
    Computer Anudeshak Exam Prep Platform — Frontend JS
    ═══════════════════════════════════════════════════════════ */
 
+// Global 401 handler: any fetch that comes back Unauthorized redirects to /login.
+(function () {
+  const origFetch = window.fetch;
+  window.fetch = async function (...args) {
+    const resp = await origFetch(...args);
+    if (resp.status === 401) {
+      window.location.href = '/login';
+    }
+    return resp;
+  };
+})();
+
 // ─── Resolve Error ────────────────────────────────────────
 let pendingResolveId = null;
 
