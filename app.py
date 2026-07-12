@@ -12,19 +12,12 @@ app.config["SESSION_TYPE"] = "filesystem"
 app.config["SESSION_FILE_DIR"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "flask_session")
 Session(app)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_URL = os.environ.get("TURSO_DB_URL", os.path.join(BASE_DIR, "data", "exam_prep.db"))
-DB_AUTH = os.environ.get("TURSO_AUTH_TOKEN", "")
-
-def get_db_conn():
-    if DB_AUTH:
-        import libsql_experimental
-        return libsql_experimental.connect(database=DB_URL, auth_token=DB_AUTH)
-    return sqlite3.connect(DB_URL)
+DB_PATH = os.path.join(BASE_DIR, 'data', 'exam_prep.db')
 
 # ─── Database Setup ───────────────────────────────────────────
 def get_db():
     if 'db' not in g:
-        g.db = get_db_conn()
+        g.db = sqlite3.connect(DB_PATH)
         g.db.row_factory = sqlite3.Row
         g.db.execute("PRAGMA journal_mode=WAL")
         g.db.execute("PRAGMA foreign_keys=ON")
