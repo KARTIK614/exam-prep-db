@@ -5,8 +5,8 @@ so only someone with dashboard access can call them. Removed once the
 platform is stable — kept for one-time bootstrap.
 """
 import sqlite3
-from flask import Blueprint, jsonify, current_app
-from werkzeug.security import generate_password_hash
+from flask import Blueprint, jsonify, current_app, request
+from werkzeug.security import generate_password_hash, check_password_hash
 
 from db import get_db
 
@@ -40,6 +40,30 @@ def diag(token):
         out["users_list"] = [{"id": u[0], "username": u[1], "role": u[2], "is_active": u[3], "pwlen": u[4]} for u in users]
     except Exception as exc:
         out["users_list"] = f"ERROR: {exc}"
+
+    # Optional probes to debug the seed<->login password mismatch.
+    # ?probe_env=1     — report length + first/last char of EXAM_ADMIN_PASS as seen by the app
+    # ?probe_pw=<val>  — check if the given password matches the stored admin hash
+    if request.args.get("probe_env") == "1":
+        pw = current_app.config.get("SEED_ADMIN_PASS") or ""
+        out["env_probe"] = {
+            "len": len(pw),
+            "first": pw[:1],
+            "last": pw[-1:] if pw else "",
+            "sha256_prefix": __import__("hashlib").sha256(pw.encode()).hexdigest()[:16],
+        }
+    probe_pw = request.args.get("probe_pw")
+    if probe_pw is not None:
+        row = db.execute(
+            "SELECT password_hash FROM users WHERE username=?",
+            (current_app.config.get("SEED_ADMIN_USER", "admin"),),
+        ).fetchone()
+        stored = row[0] if row else None
+        out["pw_probe"] = {
+            "supplied_len": len(probe_pw),
+            "stored_hash_present": bool(stored),
+            "matches": bool(stored and check_password_hash(stored, probe_pw)),
+        }
     return jsonify(out)
 
 
