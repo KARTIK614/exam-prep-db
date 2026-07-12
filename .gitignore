@@ -1,6 +1,17 @@
 .turso_token
 .turso_url
 *.bak
+*.zip
+*.pyc
 __pycache__/
 venv/
+.venv/
+.env
+.env.*
 data/flask_session/
+data/exam_prep.db-journal
+data/exam_prep.db-shm
+data/exam_prep.db-wal
+.pytest_cache/
+.coverage
+htmlcov/
