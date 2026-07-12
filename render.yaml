@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: exam-prep-platform
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app -b 0.0.0.0:10000 --timeout 120
+    envVars:
+      - key: TURSO_DB_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
+        sync: false

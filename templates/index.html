@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard — Exam Prep Platform</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <h1>Computer Anudeshak</h1>
+      <span>Exam Prep Platform</span>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="/" class="active"><span class="icon">&#9632;</span> Dashboard</a>
+      <a href="/test/setup"><span class="icon">&#9654;</span> Take Test</a>
+      <a href="/analytics"><span class="icon">&#9733;</span> Analytics</a>
+      <a href="/errorlog"><span class="icon">&#9888;</span> Error Log</a>
+    </nav>
+  </aside>
+
+  <div class="main">
+    <div class="page-header">
+      <h2>Dashboard</h2>
+      <p>Your exam preparation at a glance — Diagnostic-First Method</p>
+    </div>
+
+    <div class="content">
+      <!-- Stats Row -->
+      <div class="stat-grid">
+        <div class="stat-card primary">
+          <div class="stat-value">{{ tests.total or 0 }}</div>
+          <div class="stat-label">Tests Completed</div>
+        </div>
+        <div class="stat-card {{ 'success' if (tests.avg_score or 0) >= 60 else 'warning' }}">
+          <div class="stat-value">{{ "%.1f"|format(tests.avg_score or 0) }}%</div>
+          <div class="stat-label">Average Score</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">{{ (tests.total_time or 0) // 60 }}</div>
+          <div class="stat-label">Total Minutes Practiced</div>
+        </div>
+        <div class="stat-card {{ 'success' if (last_test and last_test.score and last_test.score >= 70) else 'warning' }}">
+          <div class="stat-value">{{ "%.1f"|format(last_test.score if last_test else 0) }}%</div>
+          <div class="stat-label">Last Test Score</div>
+        </div>
+      </div>
+
+      <!-- Quick Actions -->
+      <div style="margin-bottom:24px;display:flex;gap:12px;flex-wrap:wrap">
+        <a href="/test/setup" class="btn btn-primary btn-lg">&#9654; Start New Test</a>
+        {% if last_test %}
+        <a href="/results/{{ last_test.id }}" class="btn btn-outline btn-lg">View Last Result</a>
+        {% endif %}
+        <a href="/analytics" class="btn btn-outline btn-lg">Full Analytics</a>
+      </div>
+
+      <div class="grid-2">
+        <!-- Weak Topics -->
+        <div class="card">
+          <div class="card-header">
+            &#9888; Weak Topics
+            <span class="badge badge-danger">{{ weak_topics|length }}</span>
+          </div>
+          <div class="card-body">
+            {% if weak_topics %}
+              {% for t in weak_topics[:8] %}
+                <div class="topic-item">
+                  <div>
+                    <div class="topic-name">{{ t.name }}</div>
+                    <div class="topic-meta">{{ t.subject }} &middot; Paper {{ t.paper }} &middot; {{ t.test_count }} tests</div>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:10px">
+                    <div class="score-bar">
+                      <div class="score-bar-fill" style="width:{{ t.current_score or 0 }}%;background:var(--danger)"></div>
+                    </div>
+                    <span style="font-size:13px;font-weight:600;color:var(--danger)">{{ "%.0f"|format(t.current_score or 0) }}%</span>
+                  </div>
+                </div>
+              {% endfor %}
+            {% else %}
+              <div class="empty-state">
+                <div class="icon">&#10003;</div>
+                <p>No weak topics detected yet.<br>Take a diagnostic test to identify gaps.</p>
+              </div>
+            {% endif %}
+          </div>
+        </div>
+
+        <!-- Strong Topics -->
+        <div class="card">
+          <div class="card-header">
+            &#9733; Strong Topics
+            <span class="badge badge-success">{{ strong_topics|length }}</span>
+          </div>
+          <div class="card-body">
+            {% if strong_topics %}
+              {% for t in strong_topics[:8] %}
+                <div class="topic-item">
+                  <div>
+                    <div class="topic-name">{{ t.name }}</div>
+                    <div class="topic-meta">{{ t.subject }} &middot; Paper {{ t.paper }} &middot; {{ t.test_count }} tests</div>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:10px">
+                    <div class="score-bar">
+                      <div class="score-bar-fill" style="width:{{ t.current_score or 0 }}%;background:var(--success)"></div>
+                    </div>
+                    <span style="font-size:13px;font-weight:600;color:var(--success)">{{ "%.0f"|format(t.current_score or 0) }}%</span>
+                  </div>
+                </div>
+              {% endfor %}
+            {% else %}
+              <div class="empty-state">
+                <div class="icon">&#9733;</div>
+                <p>No strong topics yet.<br>Keep practicing to build mastery.</p>
+              </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <!-- Recent Errors -->
+        <div class="card">
+          <div class="card-header">
+            &#10060; Recent Errors
+            <span class="badge badge-danger">{{ recent_errors|length }}</span>
+          </div>
+          <div class="card-body">
+            {% if recent_errors %}
+              {% for e in recent_errors %}
+                <div class="topic-item">
+                  <div style="flex:1;min-width:0">
+                    <div class="topic-name truncate" style="font-size:13px">{{ e.question_text[:80] }}...</div>
+                    <div class="topic-meta">{{ e.topic_name }} &middot; {{ e.error_type or 'concept_gap' }}</div>
+                  </div>
+                  <span class="badge badge-danger">{{ e.selected_option }} &#8594; {{ e.correct_option }}</span>
+                </div>
+              {% endfor %}
+            {% else %}
+              <div class="empty-state">
+                <div class="icon">&#10003;</div>
+                <p>No errors! Keep up the good work.</p>
+              </div>
+            {% endif %}
+          </div>
+        </div>
+
+        <!-- Error Distribution -->
+        <div class="card">
+          <div class="card-header">Error Type Distribution</div>
+          <div class="card-body">
+            {% if error_dist %}
+              {% set total_errors = error_dist|sum(attribute='cnt') %}
+              {% for e in error_dist %}
+                <div style="margin-bottom:12px">
+                  <div class="flex-between" style="margin-bottom:4px">
+                    <span style="font-size:13px;text-transform:capitalize">{{ e.error_type|replace('_', ' ') }}</span>
+                    <span style="font-size:13px;font-weight:600">{{ e.cnt }} ({{ "%.0f"|format(e.cnt / total_errors * 100) }}%)</span>
+                  </div>
+                  <div class="score-bar" style="width:100%">
+                    <div class="score-bar-fill" style="width:{{ e.cnt / total_errors * 100 }}%;background:
+                      {% if e.error_type == 'concept_gap' %}var(--danger)
+                      {% elif e.error_type == 'time_pressure' %}var(--warning)
+                      {% else %}var(--primary){% endif %}
+                    "></div>
+                  </div>
+                </div>
+              {% endfor %}
+            {% else %}
+              <div class="empty-state"><p>No error data yet.</p></div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <!-- Paper-wise Performance -->
+      {% if paper_perf %}
+      <div class="card mt-4">
+        <div class="card-header">Paper-wise Performance</div>
+        <div class="card-body">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Paper</th><th>Tests</th><th>Avg Score</th><th>Status</th></tr>
+              </thead>
+              <tbody>
+                {% for p in paper_perf %}
+                <tr>
+                  <td><strong>Paper {{ p.paper }}</strong></td>
+                  <td>{{ p.tests }}</td>
+                  <td>{{ "%.1f"|format(p.avg or 0) }}%</td>
+                  <td>
+                    {% if (p.avg or 0) >= 60 %}
+                      <span class="badge badge-success">On Track</span>
+                    {% elif (p.avg or 0) >= 40 %}
+                      <span class="badge badge-warning">Needs Work</span>
+                    {% else %}
+                      <span class="badge badge-danger">At Risk</span>
+                    {% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Untested Topics -->
+      {% if untested %}
+      <div class="card mt-4">
+        <div class="card-header">Untested Topics ({{ untested|length }})</div>
+        <div class="card-body">
+          <div style="display:flex;flex-wrap:wrap;gap:6px">
+            {% for t in untested %}
+              <span class="badge badge-muted">{{ t.name }}</span>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</body>
+</html>

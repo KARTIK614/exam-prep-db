@@ -1,0 +1,106 @@
+erDiagram
+    topics {
+        int id PK "Primary Key"
+        text name UK "Unique — e.g. 'Ancient Rajasthan'"
+        text subject "History | Geography | Polity | Science | Current | Reasoning | Quant | CS"
+        text paper "I or II"
+        int weightage "Default 5 — exam weight"
+    }
+
+    questions {
+        int id PK "Autoincrement"
+        int topic_id FK "References topics(id)"
+        text question_text "Bilingual — English + Hindi separated by \\n"
+        text option_a "Bilingual"
+        text option_b "Bilingual"
+        text option_c "Bilingual"
+        text option_d "Bilingual"
+        text correct_option "A | B | C | D"
+        text explanation "Bilingual answer rationale"
+        text difficulty "easy | medium | hard — default 'medium'"
+        text source "agent | research | manual — origin of question"
+        text language "Default 'bilingual'"
+    }
+
+    mock_tests {
+        int id PK "Autoincrement"
+        text started_at "ISO timestamp"
+        text completed_at "ISO timestamp — null if in_progress"
+        text paper "I or II"
+        int total_questions "Number of questions in test"
+        real score "Percentage 0–100"
+        int max_score "Total possible points"
+        int time_taken_sec "Total seconds spent"
+        text status "in_progress | completed — default 'in_progress'"
+    }
+
+    test_responses {
+        int id PK "Autoincrement"
+        int test_id FK "References mock_tests(id)"
+        int question_id "References questions(id) — not formal FK"
+        text selected_option "A | B | C | D — what user chose"
+        int is_correct "0 or 1"
+        real time_spent_sec "Seconds on this question"
+        text confidence "low | medium | high — default 'medium'"
+        text error_type "concept_gap | time_pressure | memory_lapse | misread | calculation"
+    }
+
+    error_log {
+        int id PK "Autoincrement"
+        int test_id FK "References mock_tests(id)"
+        int question_id "References questions(id)"
+        int topic_id FK "References topics(id)"
+        text selected_option "What user chose"
+        text correct_option "The right answer"
+        text error_type "concept_gap | time_pressure | memory_lapse | misread | calculation"
+        text root_cause "Manual diagnosis — nullable"
+        int resolved "0 or 1 — default 0"
+        text created_at "ISO timestamp"
+        real redo_1_score "First redo attempt score"
+        real redo_2_score "Second redo attempt score"
+    }
+
+    topic_mastery {
+        int id PK "Autoincrement"
+        int topic_id FK "References topics(id) — Unique, one row per topic"
+        real diagnostic_score "Initial assessment score"
+        real current_score "Rolling weighted score (60% old + 40% new)"
+        real study_hours "Default 0 — tracked study time"
+        text status "not_started | in_progress | stable — default 'not_started'"
+        text last_studied "ISO timestamp of last session"
+        int test_count "Default 0 — total tests taken on this topic"
+    }
+
+    study_sessions {
+        int id PK "Autoincrement"
+        text date "Date of study session"
+        int topic_id FK "References topics(id)"
+        int duration_min "Minutes studied"
+        int mcqs_solved "Number of MCQs attempted"
+        real score "Percentage scored in session"
+        text notes "Free-text notes"
+    }
+
+    settings {
+        text key PK "Setting name — e.g. 'target_score'"
+        text value "Setting value — e.g. '75'"
+    }
+
+    doubt_cache {
+        int id PK "Autoincrement"
+        text cache_key UK "Unique — format: deep_dive:{question_id}:{test_id}"
+        text response_json "Full AI response as JSON string"
+        text created_at "ISO timestamp of cache creation"
+    }
+
+    %% ─── Relationships ─────────────────────────────────────
+
+    topics ||--o{ questions : "has"
+    topics ||--o{ error_log : "categorises"
+    topics ||--|| topic_mastery : "tracks mastery of"
+    topics ||--o{ study_sessions : "studied in"
+
+    questions ||--o{ test_responses : "answered in"
+
+    mock_tests ||--o{ test_responses : "contains"
+    mock_tests ||--o{ error_log : "produces"

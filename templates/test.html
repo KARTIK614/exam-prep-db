@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test #{{ test_id }} — Exam Prep Platform</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <h1>Computer Anudeshak</h1>
+      <span>Exam Prep Platform</span>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="/"><span class="icon">&#9632;</span> Dashboard</a>
+      <a href="/test/setup"><span class="icon">&#9654;</span> Take Test</a>
+      <a href="/analytics"><span class="icon">&#9733;</span> Analytics</a>
+      <a href="/errorlog"><span class="icon">&#9888;</span> Error Log</a>
+    </nav>
+  </aside>
+
+  <div class="main">
+    <div class="page-header">
+      <div class="flex-between">
+        <div>
+          <h2>Mock Test #{{ test_id }}</h2>
+          <p>Question <span id="q-num">{{ current + 1 }}</span> of {{ total }}</p>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:12px;color:var(--text-muted)">Time on this question</div>
+          <div class="timer-display" id="timer" style="font-size:28px;font-weight:700">00:00</div>
+        </div>
+      </div>
+      <!-- Progress Bar -->
+      <div class="progress-wrap mt-2">
+        <div class="progress-fill" id="progress-bar" style="width:{{ (current + 1) / total * 100 }}%"></div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="test-layout">
+        <!-- Question Panel -->
+        <div class="question-panel">
+          <div class="card" style="min-height:500px">
+            <div class="card-body" id="question-container">
+              <div class="question-number" id="q-meta"></div>
+              <div class="question-text" id="q-text">Loading...</div>
+              <div class="options-list" id="options-list"></div>
+              <div id="feedback-area"></div>
+              <div style="display:flex;gap:10px;margin-top:16px" id="action-buttons"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Side Panel -->
+        <div class="side-panel">
+          <!-- Timer Card -->
+          <div class="card">
+            <div class="card-header">Test Progress</div>
+            <div class="card-body">
+              <div style="text-align:center;margin-bottom:12px">
+                <div style="font-size:36px;font-weight:700" id="answered-count">0</div>
+                <div style="font-size:13px;color:var(--text-muted)">of {{ total }} answered</div>
+              </div>
+              <div style="text-align:center;margin-bottom:12px">
+                <div style="font-size:24px;font-weight:700;color:var(--success)" id="correct-count">0</div>
+                <div style="font-size:13px;color:var(--text-muted)">correct so far</div>
+              </div>
+              <button class="btn btn-danger" style="width:100%" onclick="finishTest()">
+                &#9632; Finish Test
+              </button>
+            </div>
+          </div>
+
+          <!-- Question Navigator -->
+          <div class="card">
+            <div class="card-header">Question Navigator</div>
+            <div class="card-body">
+              <div class="question-nav-grid" id="q-nav-grid">
+                {% for i in range(total) %}
+                <button class="q-nav-btn {{ 'current' if i == current }}" onclick="goToQuestion({{ i }})" id="nav-{{ i }}">
+                  {{ i + 1 }}
+                </button>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirm Finish Modal -->
+  <div class="modal-overlay" id="finish-modal" style="display:none">
+    <div class="modal">
+      <h3>Finish Test?</h3>
+      <p>You have answered <strong id="finish-answered">0</strong> of {{ total }} questions.</p>
+      <p id="finish-warning" style="color:var(--danger);font-size:13px;display:none">
+        Warning: You have unanswered questions.
+      </p>
+      <div class="actions">
+        <button class="btn btn-outline" onclick="document.getElementById('finish-modal').style.display='none'">Cancel</button>
+        <form method="POST" action="/test/finish" style="margin:0">
+          <button type="submit" class="btn btn-danger">Finish &amp; See Results</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/script.js"></script>
+  <script>
+    // Initialize test state
+    const TOTAL = {{ total }};
+    const TEST_ID = {{ test_id }};
+    let currentIdx = {{ current }};
+    let answered = {};
+    let correctCount = 0;
+    let timerInterval = null;
+    let timerSeconds = 0;
+
+    // Load current question
+    async function loadQuestion(idx) {
+      clearInterval(timerInterval);
+      timerSeconds = 0;
+      updateTimer();
+
+      const resp = await fetch(`/api/question/${idx}`);
+      const q = await resp.json();
+      if (q.error) return;
+
+      currentIdx = idx;
+      document.getElementById('q-num').textContent = q.index + 1;
+      document.getElementById('q-meta').innerHTML = `<strong>Topic:</strong> ${q.topic} &middot; <span class="badge badge-muted">${q.difficulty}</span>`;
+      document.getElementById('q-text').textContent = q.text;
+      document.getElementById('progress-bar').style.width = ((q.index + 1) / q.total * 100) + '%';
+
+      // Update nav
+      document.querySelectorAll('.q-nav-btn').forEach(b => b.classList.remove('current'));
+      const navBtn = document.getElementById(`nav-${q.index}`);
+      if (navBtn) navBtn.classList.add('current');
+
+      // Render options
+      const labels = ['A', 'B', 'C', 'D'];
+      let optsHtml = '';
+      q.options.forEach((opt, i) => {
+        optsHtml += `<button class="btn-option" onclick="submitAnswer('${labels[i]}')" id="opt-${i}">
+          <strong>${labels[i]}.</strong> ${opt}
+        </button>`;
+      });
+      document.getElementById('options-list').innerHTML = optsHtml;
+
+      // Clear feedback
+      document.getElementById('feedback-area').innerHTML = '';
+      document.getElementById('action-buttons').innerHTML = '';
+
+      // Restore answered state
+      if (answered[idx] !== undefined) {
+        showAnsweredState(idx, answered[idx]);
+      }
+
+      // Start timer
+      timerSeconds = 0;
+      updateTimer();
+      timerInterval = setInterval(() => {
+        timerSeconds += 0.1;
+        updateTimer();
+      }, 100);
+    }
+
+    function updateTimer() {
+      const mins = Math.floor(timerSeconds / 60);
+      const secs = Math.floor(timerSeconds % 60);
+      document.getElementById('timer').textContent =
+        String(mins).padStart(2, '0') + ':' + String(secs).padStart(2, '0');
+
+      // Color warning when > 90 seconds
+      if (timerSeconds > 90) {
+        document.getElementById('timer').style.color = 'var(--danger)';
+      } else if (timerSeconds > 60) {
+        document.getElementById('timer').style.color = 'var(--warning)';
+      } else {
+        document.getElementById('timer').style.color = 'var(--text)';
+      }
+    }
+
+    async function submitAnswer(selected) {
+      if (answered[currentIdx] !== undefined) return; // Already answered
+
+      clearInterval(timerInterval);
+      const timeSpent = Math.round(timerSeconds * 10) / 10;
+
+      const resp = await fetch('/api/submit_answer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question_index: currentIdx,
+          selected_option: selected,
+          time_spent: timeSpent
+        })
+      });
+      const result = await resp.json();
+      if (result.error) return;
+
+      answered[currentIdx] = {
+        selected: selected,
+        isCorrect: result.is_correct,
+        correct: result.correct_option
+      };
+
+      if (result.is_correct) correctCount++;
+
+      showAnsweredState(currentIdx, answered[currentIdx], result.explanation);
+
+      document.getElementById('answered-count').textContent = result.answered;
+      document.getElementById('correct-count').textContent = correctCount;
+
+      // Update nav dot
+      const navBtn = document.getElementById(`nav-${currentIdx}`);
+      if (navBtn) {
+        navBtn.classList.add('answered');
+        navBtn.classList.add(result.is_correct ? 'correct-dot' : 'wrong-dot');
+      }
+    }
+
+    function showAnsweredState(idx, ans, explanation) {
+      const labels = ['A', 'B', 'C', 'D'];
+      const correctIdx = labels.indexOf(ans.correct);
+      const selectedIdx = labels.indexOf(ans.selected);
+
+      // Highlight options
+      document.querySelectorAll('.btn-option').forEach((btn, i) => {
+        btn.style.pointerEvents = 'none';
+        if (i === correctIdx) btn.classList.add('correct');
+        if (i === selectedIdx && !ans.isCorrect) btn.classList.add('wrong');
+      });
+
+      // Show feedback
+      const fb = document.getElementById('feedback-area');
+      const explHtml = explanation ? `<div class="explanation">${explanation}</div>` : '';
+      if (ans.isCorrect) {
+        fb.innerHTML = `<div class="feedback-panel correct">
+          <strong>&#10003; Correct!</strong>${explHtml}
+        </div>`;
+      } else {
+        fb.innerHTML = `<div class="feedback-panel wrong">
+          <strong>&#10007; Wrong!</strong> Correct answer: <strong>${ans.correct}</strong>${explHtml}
+        </div>`;
+      }
+
+      // Show Next / Finish button
+      const isLast = idx >= TOTAL - 1;
+      document.getElementById('action-buttons').innerHTML = isLast
+        ? `<button class="btn btn-danger" onclick="finishTest()">Finish Test &#9654;</button>`
+        : `<button class="btn btn-primary" onclick="goToQuestion(${idx + 1})">Next Question &#9654;</button>`;
+    }
+
+    function goToQuestion(idx) {
+      if (idx >= 0 && idx < TOTAL) {
+        loadQuestion(idx);
+      }
+    }
+
+    function finishTest() {
+      const answeredCount = Object.keys(answered).length;
+      document.getElementById('finish-answered').textContent = answeredCount;
+      if (answeredCount < TOTAL) {
+        document.getElementById('finish-warning').style.display = 'block';
+      }
+      document.getElementById('finish-modal').style.display = 'flex';
+    }
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' && answered[currentIdx] !== undefined && currentIdx < TOTAL - 1) {
+        goToQuestion(currentIdx + 1);
+      } else if (e.key === 'ArrowLeft' && currentIdx > 0) {
+        goToQuestion(currentIdx - 1);
+      } else if (['a', 'b', 'c', 'd'].includes(e.key.toLowerCase()) && answered[currentIdx] === undefined) {
+        const labels = ['A', 'B', 'C', 'D'];
+        submitAnswer(labels[e.key.toLowerCase().charCodeAt(0) - 97]);
+      }
+    });
+
+    // Load first question
+    loadQuestion(currentIdx);
+  </script>
+</body>
+</html>

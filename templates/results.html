@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Results — Test #{{ test.id }} — Exam Prep Platform</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <h1>Computer Anudeshak</h1>
+      <span>Exam Prep Platform</span>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="/"><span class="icon">&#9632;</span> Dashboard</a>
+      <a href="/test/setup"><span class="icon">&#9654;</span> Take Test</a>
+      <a href="/analytics"><span class="icon">&#9733;</span> Analytics</a>
+      <a href="/errorlog"><span class="icon">&#9888;</span> Error Log</a>
+    </nav>
+  </aside>
+
+  <div class="main">
+    <div class="page-header">
+      <div class="flex-between">
+        <div>
+          <h2>Test #{{ test.id }} Results</h2>
+          <p>{{ test.paper }} &middot; {{ test.total_questions }} Questions &middot; {{ (test.time_taken_sec or 0) // 60 }} min {{ (test.time_taken_sec or 0) % 60 }} sec</p>
+        </div>
+        <a href="/test/setup" class="btn btn-primary">Take Another Test</a>
+      </div>
+    </div>
+
+    <div class="content">
+      <!-- Score Overview -->
+      <div class="stat-grid">
+        <div class="stat-card {{ 'success' if (test.score or 0) >= 60 else 'danger' }}">
+          <div class="stat-value">{{ "%.1f"|format(test.score or 0) }}%</div>
+          <div class="stat-label">Overall Score</div>
+        </div>
+        <div class="stat-card success">
+          <div class="stat-value">{{ responses|selectattr('is_correct', 'equalto', 1)|list|length }}</div>
+          <div class="stat-label">Correct</div>
+        </div>
+        <div class="stat-card danger">
+          <div class="stat-value">{{ responses|rejectattr('is_correct', 'equalto', 1)|list|length }}</div>
+          <div class="stat-label">Incorrect</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">{{ "%.1f"|format(avg_time) }}s</div>
+          <div class="stat-label">Avg Time / Question</div>
+        </div>
+      </div>
+
+      <!-- Timing Analytics -->
+      <div class="grid-3 mt-4">
+        <div class="card">
+          <div class="card-header">&#9201; Timing Analytics</div>
+          <div class="card-body">
+            <div style="text-align:center">
+              <div style="margin-bottom:16px">
+                <div style="font-size:12px;color:var(--text-muted)">Average</div>
+                <div style="font-size:28px;font-weight:700">{{ "%.1f"|format(avg_time) }}s</div>
+              </div>
+              <div class="grid-2">
+                <div>
+                  <div style="font-size:12px;color:var(--text-muted)">Fastest</div>
+                  <div style="font-size:20px;font-weight:700;color:var(--success)">{{ "%.1f"|format(fastest) }}s</div>
+                </div>
+                <div>
+                  <div style="font-size:12px;color:var(--text-muted)">Slowest</div>
+                  <div style="font-size:20px;font-weight:700;color:var(--danger)">{{ "%.1f"|format(slowest) }}s</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">&#9203; Time Segment Analysis</div>
+          <div class="card-body">
+            {% set early_correct = early|selectattr('is_correct','equalto',1)|list|length %}
+            {% set mid_correct = mid|selectattr('is_correct','equalto',1)|list|length %}
+            {% set late_correct = late|selectattr('is_correct','equalto',1)|list|length %}
+            <div style="margin-bottom:12px">
+              <div class="flex-between" style="margin-bottom:4px">
+                <span style="font-size:13px">Early (First 33%)</span>
+                <span style="font-weight:600">{{ early_correct }}/{{ early|length }} — {{ "%.0f"|format(early_correct / early|length * 100 if early else 0) }}%</span>
+              </div>
+              <div class="score-bar" style="width:100%">
+                <div class="score-bar-fill" style="width:{{ early_correct / early|length * 100 if early else 0 }}%;background:var(--primary)"></div>
+              </div>
+            </div>
+            <div style="margin-bottom:12px">
+              <div class="flex-between" style="margin-bottom:4px">
+                <span style="font-size:13px">Middle (33-66%)</span>
+                <span style="font-weight:600">{{ mid_correct }}/{{ mid|length }} — {{ "%.0f"|format(mid_correct / mid|length * 100 if mid else 0) }}%</span>
+              </div>
+              <div class="score-bar" style="width:100%">
+                <div class="score-bar-fill" style="width:{{ mid_correct / mid|length * 100 if mid else 0 }}%;background:var(--primary)"></div>
+              </div>
+            </div>
+            <div>
+              <div class="flex-between" style="margin-bottom:4px">
+                <span style="font-size:13px">Late (Final 33%)</span>
+                <span style="font-weight:600">{{ late_correct }}/{{ late|length }} — {{ "%.0f"|format(late_correct / late|length * 100 if late else 0) }}%</span>
+              </div>
+              <div class="score-bar" style="width:100%">
+                <div class="score-bar-fill" style="width:{{ late_correct / late|length * 100 if late else 0 }}%;background:var(--primary)"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">&#9888; Error Types</div>
+          <div class="card-body">
+            {% if errors %}
+              <canvas id="errorPieChart" width="200" height="200"></canvas>
+            {% else %}
+              <div class="empty-state"><p>No errors — perfect score!</p></div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <!-- Topic Breakdown -->
+      <div class="card mt-4">
+        <div class="card-header">Topic-wise Breakdown</div>
+        <div class="card-body">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Topic</th><th>Questions</th><th>Correct</th><th>Score</th><th>Avg Time</th><th>Performance</th></tr>
+              </thead>
+              <tbody>
+                {% for tn, data in topic_breakdown.items() %}
+                <tr>
+                  <td><strong>{{ tn }}</strong></td>
+                  <td>{{ data.total }}</td>
+                  <td>{{ data.correct }}</td>
+                  <td>{{ "%.0f"|format(data.correct / data.total * 100) }}%</td>
+                  <td>{{ "%.1f"|format(data.total_time / data.total) }}s</td>
+                  <td>
+                    {% set pct = data.correct / data.total * 100 %}
+                    {% if pct >= 80 %}<span class="badge badge-success">Strong</span>
+                    {% elif pct >= 60 %}<span class="badge badge-primary">Good</span>
+                    {% elif pct >= 40 %}<span class="badge badge-warning">Needs Work</span>
+                    {% else %}<span class="badge badge-danger">Weak</span>
+                    {% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Question-by-Question Review -->
+      <div class="card mt-4">
+        <div class="card-header">Question Review</div>
+        <div class="card-body">
+          {% for r in responses %}
+          <div class="topic-item">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:14px;margin-bottom:2px">
+                <strong>Q{{ loop.index }}.</strong>
+                <span style="{{ 'color:var(--success)' if r.is_correct else 'color:var(--danger)' }}">
+                  {% if r.is_correct %}&#10003;{% else %}&#10007;{% endif %}
+                </span>
+                {{ r.question_text[:100] }}{% if r.question_text|length > 100 %}...{% endif %}
+              </div>
+              <div style="font-size:12px;color:var(--text-muted)">
+                {{ r.topic_name }} &middot;
+                {% if not r.is_correct %}
+                  Your: <span style="color:var(--danger)">{{ r.selected_option }}</span> &rarr;
+                {% endif %}
+                Correct: <span style="color:var(--success)">{{ r.correct_option }}</span>
+                &middot; {{ "%.1f"|format(r.time_spent_sec or 0) }}s
+                <button class="btn btn-sm deep-dive-btn"
+                        data-qid="{{ r.question_id }}"
+                        data-tid="{{ test.id }}"
+                        data-subject="{{ r.subject }}"
+                        onclick="deepDive(this.dataset.qid, this.dataset.tid, this.dataset.subject)">
+                  &#128269; Deep Dive
+                </button>
+              </div>
+            </div>
+            <span class="badge {{ 'badge-success' if r.is_correct else 'badge-danger' }}">
+              {{ "%.0f"|format(r.time_spent_sec or 0) }}s
+            </span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <!-- Deep Dive Modal -->
+      <div id="deepDiveModal" class="modal-overlay" style="display:none">
+        <div class="modal modal-wide">
+          <div class="flex-between" style="margin-bottom:16px">
+            <h3 id="dd-title">Deep Dive Analysis</h3>
+            <button class="btn btn-sm btn-outline" onclick="closeDeepDive()" style="font-size:16px">&times;</button>
+          </div>
+          <div id="dd-loading" class="text-center" style="padding:32px">
+            <div class="spinner"></div>
+            <p class="text-muted mt-2">Analyzing with study notes + AI...</p>
+          </div>
+          <div id="dd-content" style="display:none">
+            <div id="dd-explanation" class="dd-section"></div>
+            <div id="dd-facts" class="dd-section"></div>
+            <div id="dd-tips" class="dd-section"></div>
+            <div id="dd-storyline" class="dd-section" style="display:none">
+              <h4>&#128214; Storyline</h4>
+              <div id="dd-storyline-content"></div>
+            </div>
+            <hr style="margin:20px 0;border-color:var(--border)">
+            <div id="dd-chat">
+              <h4 style="margin-bottom:10px">&#128172; Ask a Follow-Up</h4>
+              <div id="chat-messages" style="max-height:180px;overflow-y:auto;margin-bottom:10px"></div>
+              <div class="chat-input-row">
+                <input id="chat-input" type="text" placeholder="Ask more about this topic..."
+                       onkeydown="if(event.key==='Enter')sendChatMessage()">
+                <button class="btn btn-primary btn-sm" onclick="sendChatMessage()">Send</button>
+              </div>
+            </div>
+          </div>
+          <div id="dd-error" class="alert alert-danger" style="display:none"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Deep Dive state
+    let currentDD = { qid: null, tid: null, subject: null };
+
+    async function deepDive(qid, tid, subject) {
+      currentDD = { qid, tid, subject };
+      document.getElementById('dd-title').textContent = 'Deep Dive — Q' + qid;
+      document.getElementById('dd-loading').style.display = 'block';
+      document.getElementById('dd-content').style.display = 'none';
+      document.getElementById('dd-error').style.display = 'none';
+      document.getElementById('dd-storyline').style.display = 'none';
+      document.getElementById('deepDiveModal').style.display = 'flex';
+
+      try {
+        const resp = await fetch('/api/doubt/deep-dive', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ question_id: parseInt(qid), test_id: parseInt(tid) })
+        });
+        const data = await resp.json();
+
+        document.getElementById('dd-loading').style.display = 'none';
+        if (data.error) {
+          document.getElementById('dd-error').textContent = data.error;
+          document.getElementById('dd-error').style.display = 'block';
+          return;
+        }
+
+        document.getElementById('dd-content').style.display = 'block';
+        const a = data.analysis;
+        document.getElementById('dd-explanation').innerHTML = '<h4>&#128218; Concept Explanation</h4>' + markdownToHtml(a.explanation || 'No explanation available.');
+        document.getElementById('dd-facts').innerHTML = '<h4>&#9733; Key Facts</h4>' + (a.key_facts && a.key_facts.length
+          ? '<ul>' + a.key_facts.map(f => '<li>' + escapeHtml(f) + '</li>').join('') + '</ul>'
+          : '<p>None provided.</p>');
+        document.getElementById('dd-tips').innerHTML = '<h4>&#128161; Exam Tips</h4>' + markdownToHtml(a.exam_tips || 'No tips available.');
+
+        if (a.storyline && a.storyline.trim()) {
+          document.getElementById('dd-storyline').style.display = 'block';
+          document.getElementById('dd-storyline-content').innerHTML = markdownToHtml(a.storyline);
+        }
+        document.getElementById('chat-messages').innerHTML = '';
+      } catch (e) {
+        document.getElementById('dd-loading').style.display = 'none';
+        document.getElementById('dd-error').textContent = 'Failed to load analysis. Is the server running?';
+        document.getElementById('dd-error').style.display = 'block';
+      }
+    }
+
+    function closeDeepDive() {
+      document.getElementById('deepDiveModal').style.display = 'none';
+    }
+
+    async function sendChatMessage() {
+      const input = document.getElementById('chat-input');
+      const msg = input.value.trim();
+      if (!msg || !currentDD.qid) return;
+
+      const msgs = document.getElementById('chat-messages');
+      msgs.innerHTML += '<div class="chat-msg user"><strong>You:</strong> ' + escapeHtml(msg) + '</div>';
+      input.value = '';
+      msgs.innerHTML += '<div class="chat-msg ai" id="chat-waiting"><em>Thinking...</em></div>';
+      msgs.scrollTop = msgs.scrollHeight;
+
+      try {
+        const resp = await fetch('/api/doubt/chat', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ question_id: currentDD.qid, test_id: currentDD.tid, message: msg })
+        });
+        const data = await resp.json();
+        const waiting = document.getElementById('chat-waiting');
+        if (waiting) waiting.outerHTML = '<div class="chat-msg ai"><strong>Tutor:</strong> ' + markdownToHtml(data.response || data.error || 'No response.') + '</div>';
+      } catch (e) {
+        const waiting = document.getElementById('chat-waiting');
+        if (waiting) waiting.outerHTML = '<div class="chat-msg ai" style="color:var(--danger)"><strong>Error:</strong> Failed to get response.</div>';
+      }
+    }
+
+    function markdownToHtml(text) {
+      if (!text) return '';
+      return text
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/`(.+?)`/g, '<code>$1</code>')
+        .replace(/\n/g, '<br>');
+    }
+
+    function escapeHtml(text) {
+      if (!text) return '';
+      const d = document.createElement('div');
+      d.textContent = text;
+      return d.innerHTML;
+    }
+
+    // Close modal on Escape key
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') closeDeepDive();
+    });
+
+    // Close modal on overlay click
+    document.getElementById('deepDiveModal').addEventListener('click', function(e) {
+      if (e.target === this) closeDeepDive();
+    });
+  </script>
+  <script>
+    // Error Type Pie Chart
+    {% if errors %}
+    const ctx = document.getElementById('errorPieChart').getContext('2d');
+    new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: [
+          {% for et, cnt in error_types.items() %}{% if cnt > 0 %}'{{ et|replace('_',' ')|title }}',{% endif %}{% endfor %}
+        ],
+        datasets: [{
+          data: [{% for et, cnt in error_types.items() %}{% if cnt > 0 %}{{ cnt }},{% endif %}{% endfor %}],
+          backgroundColor: ['#dc2626', '#d97706', '#2563eb', '#9333ea', '#059669']
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { position: 'bottom', labels: { font: { size: 12 } } } }
+      }
+    });
+    {% endif %}
+  </script>
+</body>
+</html>

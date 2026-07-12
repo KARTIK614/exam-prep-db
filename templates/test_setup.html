@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Setup Test — Exam Prep Platform</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <h1>Computer Anudeshak</h1>
+      <span>Exam Prep Platform</span>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="/"><span class="icon">&#9632;</span> Dashboard</a>
+      <a href="/test/setup" class="active"><span class="icon">&#9654;</span> Take Test</a>
+      <a href="/analytics"><span class="icon">&#9733;</span> Analytics</a>
+      <a href="/errorlog"><span class="icon">&#9888;</span> Error Log</a>
+    </nav>
+  </aside>
+
+  <div class="main">
+    <div class="page-header">
+      <h2>Configure Mock Test</h2>
+      <p>Set up a diagnostic or practice test based on your current needs</p>
+    </div>
+
+    <div class="content">
+      <form method="POST" action="/test/setup">
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-header">Test Parameters</div>
+            <div class="card-body">
+              <div class="form-group">
+                <label>Paper</label>
+                <select name="paper">
+                  <option value="I">Paper I — General Knowledge &amp; Reasoning</option>
+                  <option value="II" selected>Paper II — Computer Science &amp; Pedagogy</option>
+                  <option value="both">Both Papers (Mixed)</option>
+                </select>
+                <div class="hint">Paper I: GK, Science, Reasoning | Paper II: CS, Programming, DBMS, Networks</div>
+              </div>
+
+              <div class="form-group">
+                <label>Number of Questions: <strong id="qs-label">50</strong></label>
+                <input type="range" name="num_questions" min="10" max="200" value="50" step="10"
+                       oninput="document.getElementById('qs-label').textContent = this.value">
+                <div class="hint">Start with 25-50 for diagnostic, build up to 100 for full mock</div>
+              </div>
+
+              <div class="form-group">
+                <label>Difficulty Level</label>
+                <select name="difficulty">
+                  <option value="all">All Difficulties</option>
+                  <option value="easy">Easy Only</option>
+                  <option value="medium">Medium Only</option>
+                  <option value="hard">Hard Only</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label class="toggle-wrap">
+                  <span>Focus on Weak Topics Only</span>
+                  <input type="checkbox" name="focus_weak" style="width:auto">
+                </label>
+                <div class="hint">Only include questions from topics where your score is below 60%</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">Select Topics</div>
+            <div class="card-body">
+              <div style="margin-bottom:12px">
+                <a href="#" onclick="checkAll()" style="font-size:12px;margin-right:12px">Select All</a>
+                <a href="#" onclick="uncheckAll()" style="font-size:12px">Clear All</a>
+                <span class="text-muted" style="margin-left:8px">(leave empty = all topics)</span>
+              </div>
+
+              {% set current_subject = namespace(val='') %}
+              {% for t in topics %}
+                {% if t.subject != current_subject.val %}
+                  {% if current_subject.val %}</div>{% endif %}
+                  {% set current_subject.val = t.subject %}
+                  <div style="font-weight:600;font-size:14px;margin:10px 0 6px;padding-bottom:4px;border-bottom:1px solid var(--border)">
+                    {{ t.paper }} — {{ t.subject }}
+                  </div>
+                  <div class="checkbox-grid">
+                {% endif %}
+                <label class="checkbox-item">
+                  <input type="checkbox" name="topics" value="{{ t.id }}">
+                  <span>{{ t.name }}</span>
+                </label>
+              {% endfor %}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style="text-align:center;margin-top:20px">
+          <button type="submit" class="btn btn-primary btn-lg">&#9654; Start Test</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    function checkAll() {
+      document.querySelectorAll('input[name="topics"]').forEach(cb => cb.checked = true);
+      return false;
+    }
+    function uncheckAll() {
+      document.querySelectorAll('input[name="topics"]').forEach(cb => cb.checked = false);
+      return false;
+    }
+  </script>
+</body>
+</html>

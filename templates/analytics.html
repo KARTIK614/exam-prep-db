@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Analytics — Exam Prep Platform</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <h1>Computer Anudeshak</h1>
+      <span>Exam Prep Platform</span>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="/"><span class="icon">&#9632;</span> Dashboard</a>
+      <a href="/test/setup"><span class="icon">&#9654;</span> Take Test</a>
+      <a href="/analytics" class="active"><span class="icon">&#9733;</span> Analytics</a>
+      <a href="/errorlog"><span class="icon">&#9888;</span> Error Log</a>
+    </nav>
+  </aside>
+
+  <div class="main">
+    <div class="page-header">
+      <h2>Analytics Dashboard</h2>
+      <p>Deep dive into your performance data — identify patterns, track growth</p>
+    </div>
+
+    <div class="content">
+      <!-- Progress Over Time -->
+      <div class="card mb-4">
+        <div class="card-header">Score Progress</div>
+        <div class="card-body">
+          {% if progress %}
+            <div class="chart-container"><canvas id="progressChart" height="80"></canvas></div>
+          {% else %}
+            <div class="empty-state"><p>Complete at least one test to see progress data.</p></div>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Topic Mastery Radar + Paper Comparison -->
+      <div class="chart-row">
+        <div class="card">
+          <div class="card-header">Topic Mastery Overview</div>
+          <div class="card-body">
+            {% if topics_data %}
+              <div class="chart-container"><canvas id="masteryChart" height="250"></canvas></div>
+            {% else %}
+              <div class="empty-state"><p>No topic data yet.</p></div>
+            {% endif %}
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">Paper-wise Comparison (Last 5 Tests)</div>
+          <div class="card-body">
+            {% if paper1 or paper2 %}
+              <div class="chart-container"><canvas id="paperChart" height="250"></canvas></div>
+            {% else %}
+              <div class="empty-state"><p>Complete tests from both papers to compare.</p></div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <!-- Time-per-Question Trend + Error Trends -->
+      <div class="chart-row">
+        <div class="card">
+          <div class="card-header">Time-per-Question Trend</div>
+          <div class="card-body">
+            {% if time_trend %}
+              <div class="chart-container"><canvas id="timeTrendChart" height="200"></canvas></div>
+            {% else %}
+              <div class="empty-state"><p>No timing data yet.</p></div>
+            {% endif %}
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">Accuracy by Difficulty</div>
+          <div class="card-body">
+            {% if difficulty_stats %}
+              <div class="chart-container"><canvas id="difficultyChart" height="200"></canvas></div>
+            {% else %}
+              <div class="empty-state"><p>No difficulty data yet.</p></div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <!-- 30-Day Activity Heatmap -->
+      <div class="card mb-4">
+        <div class="card-header">30-Day Activity</div>
+        <div class="card-body">
+          <div class="heatmap-grid">
+            {% for day in heatmap %}
+              {% set alpha = (day.avg / 100) if day.tests > 0 else 0 %}
+              <div class="heatmap-cell" style="background:rgba(37,99,235,{{ alpha }});color:{{ '#fff' if alpha > 0.5 else 'var(--text-muted)' }}"
+                   title="{{ day.date }}: {{ day.tests }} tests, {{ day.avg }}% avg">
+                <strong>{{ day.avg if day.tests > 0 else '-' }}</strong>
+                <span style="font-size:8px">{{ day.date[-5:] }}</span>
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings Panel -->
+      <div class="card mb-4">
+        <div class="card-header">Settings</div>
+        <div class="card-body">
+          <div class="settings-grid">
+            <div class="form-group">
+              <label>Target Score (%)</label>
+              <input type="number" id="setting-target" value="{{ settings.target_score or '75' }}" min="30" max="100">
+            </div>
+            <div class="form-group">
+              <label>Accuracy Focus</label>
+              <select id="setting-accuracy">
+                <option value="true" {{ 'selected' if settings.accuracy_focus == 'true' }}>On — prioritize accuracy over speed</option>
+                <option value="false" {{ 'selected' if settings.accuracy_focus == 'false' }}>Off — balanced speed and accuracy</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Weakness Threshold (%)</label>
+              <input type="number" id="setting-threshold" value="{{ settings.weakness_threshold or '60' }}" min="30" max="90">
+            </div>
+            <div style="display:flex;align-items:flex-end">
+              <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+              <span id="settings-saved" style="margin-left:12px;color:var(--success);display:none">&#10003; Saved</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/script.js"></script>
+  <script>
+    // ─── Progress Chart ───────────────────────────────
+    {% if progress %}
+    (function() {
+      const data = {{ progress|tojson }};
+      const grouped = {};
+      data.forEach(d => {
+        const label = d.d || '';
+        if (!grouped[label]) grouped[label] = [];
+        grouped[label].push(d.score);
+      });
+      const labels = Object.keys(grouped);
+      const scores = labels.map(l => grouped[l].reduce((a,b) => a+b, 0) / grouped[l].length);
+
+      new Chart(document.getElementById('progressChart'), {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: 'Score (%)',
+            data: scores,
+            borderColor: '#2563eb',
+            backgroundColor: 'rgba(37,99,235,0.1)',
+            fill: true,
+            tension: 0.3,
+            pointRadius: 5,
+            pointBackgroundColor: '#2563eb'
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            y: { min: 0, max: 100, ticks: { callback: v => v + '%' } }
+          },
+          plugins: {
+            annotation: {
+              annotations: {
+                targetLine: { type: 'line', yMin: {{ settings.target_score or 75 }}, yMax: {{ settings.target_score or 75 }}, borderColor: '#059669', borderDash: [5,5], borderWidth: 2 }
+              }
+            }
+          }
+        }
+      });
+    })();
+    {% endif %}
+
+    // ─── Topic Mastery Bar Chart ──────────────────────
+    {% if topics_data %}
+    (function() {
+      const data = {{ topics_data|tojson }};
+      new Chart(document.getElementById('masteryChart'), {
+        type: 'bar',
+        data: {
+          labels: data.map(d => d.name),
+          datasets: [{
+            label: 'Mastery Score (%)',
+            data: data.map(d => d.current_score || 0),
+            backgroundColor: data.map(d => {
+              const s = d.current_score || 0;
+              return s >= 70 ? '#059669' : s >= 50 ? '#2563eb' : s > 0 ? '#d97706' : '#d1d5db';
+            }),
+            borderRadius: 4
+          }]
+        },
+        options: {
+          responsive: true,
+          indexAxis: 'y',
+          scales: { x: { min: 0, max: 100, ticks: { callback: v => v + '%' } } },
+          plugins: { legend: { display: false } }
+        }
+      });
+    })();
+    {% endif %}
+
+    // ─── Paper Comparison Chart ───────────────────────
+    {% if paper1 or paper2 %}
+    (function() {
+      const p1 = {{ paper1|tojson }};
+      const p2 = {{ paper2|tojson }};
+      const labels = ['Test 5', 'Test 4', 'Test 3', 'Test 2', 'Test 1'];
+
+      new Chart(document.getElementById('paperChart'), {
+        type: 'line',
+        data: {
+          labels: labels.slice(0, Math.max(p1.length, p2.length)),
+          datasets: [
+            {
+              label: 'Paper I',
+              data: p1.map(d => d.score).reverse(),
+              borderColor: '#2563eb',
+              tension: 0.3,
+              spanGaps: true
+            },
+            {
+              label: 'Paper II',
+              data: p2.map(d => d.score).reverse(),
+              borderColor: '#d97706',
+              tension: 0.3,
+              spanGaps: true
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          scales: { y: { min: 0, max: 100, ticks: { callback: v => v + '%' } } }
+        }
+      });
+    })();
+    {% endif %}
+
+    // ─── Time Trend Chart ─────────────────────────────
+    {% if time_trend %}
+    (function() {
+      const data = {{ time_trend|tojson }};
+      new Chart(document.getElementById('timeTrendChart'), {
+        type: 'line',
+        data: {
+          labels: data.map(d => 'Test #' + d.id),
+          datasets: [{
+            label: 'Avg Time per Question (s)',
+            data: data.map(d => d.avg_time),
+            borderColor: '#d97706',
+            tension: 0.3
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: true } }
+        }
+      });
+    })();
+    {% endif %}
+
+    // ─── Difficulty Chart ─────────────────────────────
+    {% if difficulty_stats %}
+    (function() {
+      const data = {{ difficulty_stats|tojson }};
+      new Chart(document.getElementById('difficultyChart'), {
+        type: 'bar',
+        data: {
+          labels: data.map(d => d.difficulty),
+          datasets: [
+            { label: 'Correct', data: data.map(d => d.correct), backgroundColor: '#059669' },
+            { label: 'Wrong', data: data.map(d => d.total - d.correct), backgroundColor: '#dc2626' }
+          ]
+        },
+        options: {
+          responsive: true,
+          scales: { x: { stacked: true }, y: { stacked: true } },
+          plugins: { legend: { display: true } }
+        }
+      });
+    })();
+    {% endif %}
+
+    // ─── Settings ─────────────────────────────────────
+    async function saveSettings() {
+      const resp = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          target_score: document.getElementById('setting-target').value,
+          accuracy_focus: document.getElementById('setting-accuracy').value,
+          weakness_threshold: document.getElementById('setting-threshold').value
+        })
+      });
+      if (resp.ok) {
+        document.getElementById('settings-saved').style.display = 'inline';
+        setTimeout(() => {
+          document.getElementById('settings-saved').style.display = 'none';
+        }, 2000);
+      }
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Error Log — Exam Prep Platform</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <h1>Computer Anudeshak</h1>
+      <span>Exam Prep Platform</span>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="/"><span class="icon">&#9632;</span> Dashboard</a>
+      <a href="/test/setup"><span class="icon">&#9654;</span> Take Test</a>
+      <a href="/analytics"><span class="icon">&#9733;</span> Analytics</a>
+      <a href="/errorlog" class="active"><span class="icon">&#9888;</span> Error Log</a>
+    </nav>
+  </aside>
+
+  <div class="main">
+    <div class="page-header">
+      <div class="flex-between">
+        <div>
+          <h2>Error Log</h2>
+          <p>{{ total }} total errors — Review, understand, and eliminate</p>
+        </div>
+        <span class="badge {{ 'badge-success' if total == 0 else 'badge-danger' }}">{{ total }} errors</span>
+      </div>
+    </div>
+
+    <div class="content">
+      <!-- Filters -->
+      <div class="card mb-4">
+        <div class="card-body">
+          <form method="GET" action="/errorlog" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+            <div class="form-group" style="margin-bottom:0;min-width:200px">
+              <label>Topic Filter</label>
+              <select name="topic">
+                <option value="">All Topics</option>
+                {% for t in topics %}
+                <option value="{{ t.id }}" {{ 'selected' if topic_filter == t.id|string }}>{{ t.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0;min-width:160px">
+              <label>Error Type</label>
+              <select name="type">
+                <option value="">All Types</option>
+                <option value="concept_gap" {{ 'selected' if type_filter == 'concept_gap' }}>Concept Gap</option>
+                <option value="memory_lapse" {{ 'selected' if type_filter == 'memory_lapse' }}>Memory Lapse</option>
+                <option value="misread" {{ 'selected' if type_filter == 'misread' }}>Misread</option>
+                <option value="calculation" {{ 'selected' if type_filter == 'calculation' }}>Calculation Error</option>
+                <option value="time_pressure" {{ 'selected' if type_filter == 'time_pressure' }}>Time Pressure</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0;min-width:140px">
+              <label>Status</label>
+              <select name="resolved">
+                <option value="all" {{ 'selected' if resolved_filter == 'all' }}>All</option>
+                <option value="no" {{ 'selected' if resolved_filter == 'no' }}>Unresolved</option>
+                <option value="yes" {{ 'selected' if resolved_filter == 'yes' }}>Resolved</option>
+              </select>
+            </div>
+            <button type="submit" class="btn btn-primary">Filter</button>
+            <a href="/errorlog" class="btn btn-outline btn-sm">Clear</a>
+          </form>
+        </div>
+      </div>
+
+      <!-- Error List -->
+      <div class="card">
+        <div class="card-body">
+          {% if errors %}
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Question</th>
+                    <th>Topic</th>
+                    <th>Your</th>
+                    <th>Correct</th>
+                    <th>Type</th>
+                    <th>Resolved</th>
+                    <th>Redo 1</th>
+                    <th>Redo 2</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for e in errors %}
+                  <tr>
+                    <td>{{ e.id }}</td>
+                    <td style="max-width:300px">
+                      <div class="truncate" title="{{ e.question_text }}">{{ e.question_text[:100] }}...</div>
+                    </td>
+                    <td><span class="badge badge-muted">{{ e.topic_name }}</span></td>
+                    <td><span class="badge badge-danger">{{ e.selected_option }}</span></td>
+                    <td><span class="badge badge-success">{{ e.correct_option }}</span></td>
+                    <td>
+                      <span class="badge {{ 'badge-danger' if e.error_type == 'concept_gap' else 'badge-warning' if e.error_type == 'time_pressure' else 'badge-muted' }}">
+                        {{ e.error_type|replace('_', ' ') if e.error_type else 'unknown' }}
+                      </span>
+                    </td>
+                    <td>
+                      {% if e.resolved %}
+                        <span class="badge badge-success">Yes</span>
+                        {% if e.root_cause %}<div style="font-size:11px;color:var(--text-muted)">{{ e.root_cause[:30] }}</div>{% endif %}
+                      {% else %}
+                        <span class="badge badge-warning">No</span>
+                      {% endif %}
+                    </td>
+                    <td>
+                      {% if e.redo_1_score is not none %}
+                        <span class="badge {{ 'badge-success' if e.redo_1_score >= 0.5 else 'badge-danger' }}">
+                          {{ "%.0f"|format(e.redo_1_score * 100) }}%
+                        </span>
+                      {% else %}
+                        <span class="text-muted">—</span>
+                      {% endif %}
+                    </td>
+                    <td>
+                      {% if e.redo_2_score is not none %}
+                        <span class="badge {{ 'badge-success' if e.redo_2_score >= 0.5 else 'badge-danger' }}">
+                          {{ "%.0f"|format(e.redo_2_score * 100) }}%
+                        </span>
+                      {% else %}
+                        <span class="text-muted">—</span>
+                      {% endif %}
+                    </td>
+                    <td>
+                      <div style="display:flex;gap:4px">
+                        {% if not e.resolved %}
+                        <button class="btn btn-sm btn-success" onclick="resolveError({{ e.id }})" title="Mark Resolved">&#10003;</button>
+                        {% endif %}
+                        <button class="btn btn-sm btn-primary" onclick="redoError({{ e.id }}, 1)" title="Record 1st Redo">R1</button>
+                        <button class="btn btn-sm btn-primary" onclick="redoError({{ e.id }}, 2)" title="Record 2nd Redo">R2</button>
+                      </div>
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Pagination -->
+            {% set total_pages = ((total / per_page)|round(0, 'ceil')|int) %}
+            {% if total_pages > 1 %}
+            <div class="pagination">
+              {% if page > 1 %}
+                <a href="?page={{ page - 1 }}&topic={{ topic_filter or '' }}&type={{ type_filter or '' }}&resolved={{ resolved_filter }}">&laquo; Prev</a>
+              {% endif %}
+              {% for p in range(1, total_pages + 1) %}
+                {% if p == page %}
+                  <span class="current">{{ p }}</span>
+                {% elif p <= 3 or p > total_pages - 3 or (p >= page - 2 and p <= page + 2) %}
+                  <a href="?page={{ p }}&topic={{ topic_filter or '' }}&type={{ type_filter or '' }}&resolved={{ resolved_filter }}">{{ p }}</a>
+                {% elif p == 4 or p == total_pages - 3 %}
+                  <span>...</span>
+                {% endif %}
+              {% endfor %}
+              {% if page < total_pages %}
+                <a href="?page={{ page + 1 }}&topic={{ topic_filter or '' }}&type={{ type_filter or '' }}&resolved={{ resolved_filter }}">Next &raquo;</a>
+              {% endif %}
+            </div>
+            {% endif %}
+          {% else %}
+            <div class="empty-state">
+              <div class="icon">&#10003;</div>
+              <p>No errors match your filters.</p>
+            </div>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Resolve Modal -->
+      <div class="modal-overlay" id="resolve-modal" style="display:none">
+        <div class="modal">
+          <h3>Resolve Error #<span id="resolve-id"></span></h3>
+          <div class="form-group">
+            <label>Root Cause</label>
+            <select id="root-cause">
+              <option value="">Select cause...</option>
+              <option value="Did not know the concept">Concept Gap — didn't know the topic</option>
+              <option value="Knew but forgot">Memory Lapse — knew but couldn't recall</option>
+              <option value="Misread the question">Misread — didn't read carefully</option>
+              <option value="Calculation mistake">Calculation Error — math/logic slip</option>
+              <option value="Ran out of time">Time Pressure — rushed due to clock</option>
+              <option value="Confused between options">Confusion — narrowed to 2, picked wrong</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Notes (optional)</label>
+            <textarea id="resolve-notes" rows="2" placeholder="What will you do differently next time?"></textarea>
+          </div>
+          <div class="actions">
+            <button class="btn btn-outline" onclick="document.getElementById('resolve-modal').style.display='none'">Cancel</button>
+            <button class="btn btn-success" onclick="confirmResolve()">Mark Resolved</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Redo Modal -->
+      <div class="modal-overlay" id="redo-modal" style="display:none">
+        <div class="modal">
+          <h3>Record Redo Attempt</h3>
+          <p>Did you get this question correct on your redo?</p>
+          <div class="actions">
+            <button class="btn btn-danger" onclick="confirmRedo(0)">Wrong Again</button>
+            <button class="btn btn-success" onclick="confirmRedo(1)">Got It Right</button>
+            <button class="btn btn-outline" onclick="document.getElementById('redo-modal').style.display='none'">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/script.js"></script>
+</body>
+</html>

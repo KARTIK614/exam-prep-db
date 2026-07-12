@@ -1,0 +1,6 @@
+.turso_token
+.turso_url
+*.bak
+__pycache__/
+venv/
+data/flask_session/
