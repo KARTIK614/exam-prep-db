@@ -19,12 +19,18 @@ def create_app(config_object=Config):
     Session(app)
     app.teardown_appcontext(close_db)
 
-    init_db(app)
+    try:
+        init_db(app)
+    except Exception as exc:
+        app.logger.error(f"init_db failed (continuing): {exc}", exc_info=True)
     try:
         seed_data(app.config["DB_PATH"])
     except Exception as exc:
         app.logger.warning(f"seed_data skipped: {exc}")
-    seed_admin_if_empty(app)
+    try:
+        seed_admin_if_empty(app)
+    except Exception as exc:
+        app.logger.error(f"seed_admin_if_empty failed (continuing): {exc}", exc_info=True)
 
     app.before_request(check_auth)
 

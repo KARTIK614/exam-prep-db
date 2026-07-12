@@ -1,66 +1,234 @@
 """
 Turso HTTP adapter — pure Python, no Rust. Works on Render.
-Monkey-patches sqlite3 to route exam_prep.db to Turso Cloud.
+Monkey-patches sqlite3 so any connection to a path containing "exam_prep"
+is routed to the Turso Cloud REST endpoint via the Hrana v2 pipeline API.
+
+Provides sqlite3.Row-compatible rows (both integer and string indexing),
+plus executescript() so schema init works over HTTP.
 """
-import os, sqlite3, json, requests
+import os
+import sqlite3
+import requests
 
 TURSO_URL = os.environ.get("TURSO_DB_URL", "")
-TURSO_AUTH=os.environ.get("TURSO_AUTH_TOKEN", "")
+TURSO_AUTH = os.environ.get("TURSO_AUTH_TOKEN", "")
 REST = TURSO_URL.replace("libsql://", "https://").split("?")[0] + "/v2/pipeline" if TURSO_URL else ""
 
-class TR:
-    def __init__(self, u, t):
-        self.b = REST; self.h = {"Authorization": "Bearer "+t, "Content-Type": "application/json"}
-    def execute(self, s, p=None):
-        q = {"sql": s}
-        if p:
-            if isinstance(p, dict): q["named_args"] = [{k: v} for k, v in p.items()]
-            elif isinstance(p, (tuple, list)): q["args"] = list(p)
-            else: q["args"] = [p]
-        r = requests.post(self.b, headers=self.h, json={"requests": [{"type": "execute", "stmt": q}]}, timeout=30)
-        return TC(r.json().get("results", [{}])[0])
-    def executemany(self, s, rows):
-        if not rows: return
-        rqs = []
-        cols = None
-        for params in rows:
-            ss = s
-            if params:
-                for v in params:
-                    if v is None: ss = ss.replace("?", "NULL", 1)
-                    elif isinstance(v, (int, float)): ss = ss.replace("?", str(v), 1)
-                    else:
-                        escaped = str(v).replace("'", "''")
-                        ss = ss.replace("?", f"'{escaped}'", 1)
-            rqs.append({"type": "execute", "stmt": {"sql": ss}})
-        requests.post(self.b, headers=self.h, json={"requests": rqs}, timeout=30)
-    def commit(self): pass
-    def close(self): pass
-    def cursor(self): return self
+
+class Row:
+    """sqlite3.Row-compatible: supports row[0], row['col'], iter(row), len(row), .keys(), .get()."""
+    __slots__ = ("_values", "_map")
+
+    def __init__(self, values, cols):
+        self._values = tuple(values)
+        self._map = {c: v for c, v in zip(cols, values)}
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return self._values[key]
+        return self._map[key]
+
+    def get(self, key, default=None):
+        return self._map.get(key, default)
+
+    def keys(self):
+        return list(self._map.keys())
+
+    def __iter__(self):
+        return iter(self._values)
+
+    def __len__(self):
+        return len(self._values)
+
+    def __contains__(self, key):
+        return key in self._map
+
+    def __repr__(self):
+        return f"Row({self._map!r})"
+
+
+def _typed_arg(v):
+    """Convert a Python value to Hrana v2 typed-arg dict."""
+    if v is None:
+        return {"type": "null"}
+    if isinstance(v, bool):
+        return {"type": "integer", "value": str(int(v))}
+    if isinstance(v, int):
+        return {"type": "integer", "value": str(v)}
+    if isinstance(v, float):
+        return {"type": "float", "value": v}
+    if isinstance(v, (bytes, bytearray)):
+        import base64
+        return {"type": "blob", "base64": base64.b64encode(bytes(v)).decode()}
+    return {"type": "text", "value": str(v)}
+
+
+def _build_stmt(sql, params):
+    stmt = {"sql": sql}
+    if params is None:
+        return stmt
+    if isinstance(params, dict):
+        stmt["named_args"] = [{"name": k, "value": _typed_arg(v)} for k, v in params.items()]
+    elif isinstance(params, (list, tuple)):
+        stmt["args"] = [_typed_arg(v) for v in params]
+    else:
+        stmt["args"] = [_typed_arg(params)]
+    return stmt
+
+
+def _post(requests_list, timeout=30):
+    """POST a list of Hrana requests. Raise if HTTP failed or Hrana returned an error."""
+    r = requests.post(
+        REST,
+        headers={"Authorization": "Bearer " + TURSO_AUTH, "Content-Type": "application/json"},
+        json={"requests": requests_list},
+        timeout=timeout,
+    )
+    r.raise_for_status()
+    return r.json()
+
 
 class TC:
-    def __init__(self, r):
-        resp = r.get("response", {}); restype = resp.get("type", "")
-        self._rows = []
-        if restype == "execute":
-            res = resp.get("result", {})
-            if "rows" in res:
-                for row in res["rows"]:
-                    self._rows.append(tuple(v.get("value") if isinstance(v, dict) else v for v in row))
-                if "cols" in res:
-                    self.description = [(c.get("name", ""),) for c in res["cols"]]
-        self._idx = 0; self.arraysize = 1
-    def fetchone(self):
-        if self._idx < len(self._rows): r = self._rows[self._idx]; self._idx += 1; return r
-        return None
-    def fetchall(self): return self._rows
-    def __iter__(self): return iter(self._rows)
-    def close(self): pass
+    """Cursor-like object holding the parsed rows of one Hrana `execute` response."""
 
-_orig = sqlite3.connect
-def _patch(database, *a, **kw):
+    def __init__(self, result_envelope):
+        resp = result_envelope.get("response", {}) or {}
+        restype = resp.get("type", "")
+        self._rows = []
+        self._cols = []
+        self.description = None
+        self.lastrowid = None
+        self._idx = 0
+        self.arraysize = 1
+
+        if resp.get("type") == "" and "error" in result_envelope:
+            err = result_envelope["error"]
+            raise sqlite3.DatabaseError(f"Turso error: {err}")
+
+        if restype == "execute":
+            res = resp.get("result", {}) or {}
+            self._cols = [c.get("name", "") for c in res.get("cols", [])]
+            for row in res.get("rows", []):
+                values = [v.get("value") if isinstance(v, dict) else v for v in row]
+                # Coerce integer strings back to ints (Hrana returns integers as strings).
+                for i, v in enumerate(values):
+                    if isinstance(v, str) and isinstance(row[i], dict) and row[i].get("type") == "integer":
+                        try:
+                            values[i] = int(v)
+                        except ValueError:
+                            pass
+                    elif isinstance(row[i], dict) and row[i].get("type") == "null":
+                        values[i] = None
+                self._rows.append(Row(values, self._cols))
+            if self._cols:
+                self.description = [(c,) for c in self._cols]
+            lri = res.get("last_insert_rowid")
+            if lri is not None:
+                try:
+                    self.lastrowid = int(lri)
+                except (TypeError, ValueError):
+                    self.lastrowid = lri
+
+    def fetchone(self):
+        if self._idx < len(self._rows):
+            r = self._rows[self._idx]
+            self._idx += 1
+            return r
+        return None
+
+    def fetchall(self):
+        return list(self._rows)
+
+    def __iter__(self):
+        return iter(self._rows)
+
+    def close(self):
+        pass
+
+
+class TR:
+    """Connection-like object. Delegates SQL to the Turso HTTP endpoint."""
+
+    def __init__(self, url, token):
+        self.url = url
+        self.token = token
+        self.row_factory = None  # kept for API compatibility; ignored (rows are always Row).
+
+    def execute(self, sql, params=None):
+        payload = _post([{"type": "execute", "stmt": _build_stmt(sql, params)}])
+        results = payload.get("results", [{}])
+        return TC(results[0])
+
+    def executemany(self, sql, rows_iter):
+        rows = list(rows_iter or [])
+        if not rows:
+            return TC({})
+        reqs = [{"type": "execute", "stmt": _build_stmt(sql, r)} for r in rows]
+        # Send in chunks of 50 to stay under Turso payload limits.
+        for i in range(0, len(reqs), 50):
+            _post(reqs[i:i + 50], timeout=60)
+        return TC({})
+
+    def executescript(self, script):
+        """Execute a multi-statement SQL script (semicolon-separated)."""
+        stmts = _split_sql(script)
+        if not stmts:
+            return
+        reqs = [{"type": "execute", "stmt": {"sql": s}} for s in stmts]
+        for i in range(0, len(reqs), 50):
+            _post(reqs[i:i + 50], timeout=60)
+
+    def commit(self):
+        pass
+
+    def rollback(self):
+        pass
+
+    def close(self):
+        pass
+
+    def cursor(self):
+        return self
+
+
+def _split_sql(script):
+    """Split a SQL script into individual statements, respecting single-quoted strings."""
+    stmts = []
+    buf = []
+    in_string = False
+    i = 0
+    while i < len(script):
+        ch = script[i]
+        if ch == "'":
+            # Handle '' escape inside a string.
+            if in_string and i + 1 < len(script) and script[i + 1] == "'":
+                buf.append("''")
+                i += 2
+                continue
+            in_string = not in_string
+            buf.append(ch)
+        elif ch == ";" and not in_string:
+            piece = "".join(buf).strip()
+            if piece:
+                stmts.append(piece)
+            buf = []
+        else:
+            buf.append(ch)
+        i += 1
+    tail = "".join(buf).strip()
+    if tail:
+        stmts.append(tail)
+    return stmts
+
+
+_orig_connect = sqlite3.connect
+
+
+def _patched_connect(database, *args, **kwargs):
     s = str(database)
     if TURSO_URL and TURSO_AUTH and "exam_prep" in s:
         return TR(TURSO_URL, TURSO_AUTH)
-    return _orig(database, *a, **kw)
-sqlite3.connect = _patch
+    return _orig_connect(database, *args, **kwargs)
+
+
+sqlite3.connect = _patched_connect
