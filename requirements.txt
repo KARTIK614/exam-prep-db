@@ -3,3 +3,4 @@ Werkzeug>=3.0
 gunicorn
 requests
 flask-session
+pyjwt

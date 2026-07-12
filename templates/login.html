@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Exam Prep — Login</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', system-ui; background: linear-gradient(135deg, #0a0f1e, #1a1040); min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .card { background: #fff; border-radius: 12px; padding: 40px; width: 380px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+    .card h1 { font-size: 22pt; color: #0a0f1e; margin-bottom: 8px; }
+    .card h1 span { color: #f47920; }
+    .card p { color: #666; font-size: 10pt; margin-bottom: 28px; }
+    label { display: block; font-size: 9pt; color: #555; margin-bottom: 4px; font-weight: 600; }
+    input { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 11pt; margin-bottom: 16px; outline: none; }
+    input:focus { border-color: #7b2d8b; }
+    button { width: 100%; padding: 12px; background: #7b2d8b; color: #fff; border: none; border-radius: 6px; font-size: 12pt; font-weight: 600; cursor: pointer; }
+    button:hover { background: #6a2580; }
+    .error { background: #ffe0e0; color: #c00; padding: 10px; border-radius: 6px; font-size: 9pt; margin-bottom: 16px; display: none; }
+    .error.show { display: block; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Exam <span>Prep</span></h1>
+    <p>Computer Anudeshak — Diagnostic Analytics Platform</p>
+    <div class="error" id="error">Invalid credentials</div>
+    <form method="POST" action="/login">
+      <label>Username</label>
+      <input type="text" name="username" placeholder="Enter username" required autofocus>
+      <label>Password</label>
+      <input type="password" name="password" placeholder="Enter password" required>
+      <button type="submit">Sign In</button>
+    </form>
+  </div>
+  {% if error %}
+  <script>document.getElementById('error').classList.add('show');</script>
+  {% endif %}
+</body>
+</html>

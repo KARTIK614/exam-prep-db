@@ -11,6 +11,40 @@ app.secret_key = os.urandom(24)
 app.config["SESSION_TYPE"] = "filesystem"
 app.config["SESSION_FILE_DIR"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "flask_session")
 Session(app)
+
+# ─── JWT Auth ────────────────────────────────────────────────
+from auth import create_token, verify_token, require_auth, DEFAULT_USER, DEFAULT_PASS
+
+@app.route('/login', methods=['GET', 'POST'])
+def login_page():
+    error = None
+    if request.method == 'POST':
+        if request.form.get('username') == DEFAULT_USER and request.form.get('password') == DEFAULT_PASS:
+            token = create_token(DEFAULT_USER)
+            resp = redirect(url_for('index'))
+            resp.set_cookie('auth_token', token, httponly=True, samesite='Lax')
+            session['auth_token'] = token
+            return resp
+        error = 'Invalid credentials'
+    return render_template('login.html', error=error)
+
+@app.route('/logout')
+def logout():
+    session.pop('auth_token', None)
+    resp = redirect(url_for('login_page'))
+    resp.delete_cookie('auth_token')
+    return resp
+
+@app.before_request
+def check_auth():
+    """Require authentication for all routes except login and static"""
+    if request.endpoint in ('login_page', 'static', None):
+        return
+    token = request.cookies.get("auth_token") or session.get("auth_token")
+    if not token or not verify_token(token):
+        if request.endpoint and request.endpoint.startswith('api'):
+            return jsonify({"error": "Unauthorized"}), 401
+        return redirect(url_for('login_page'))
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, 'data', 'exam_prep.db')
 
