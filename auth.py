@@ -82,7 +82,7 @@ def seed_admin_if_empty(app):
 
 
 # Endpoints that should NOT trigger the auth check.
-_PUBLIC_ENDPOINTS = {None, "static", "auth.login", "auth.logout"}
+_PUBLIC_ENDPOINTS = {None, "static", "auth.login", "auth.logout", "diag.diag", "diag.force_seed"}
 
 
 def check_auth():

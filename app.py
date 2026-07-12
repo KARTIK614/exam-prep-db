@@ -41,6 +41,7 @@ def create_app(config_object=Config):
     from bp_errorlog import bp as errorlog_bp
     from bp_api import bp as api_bp
     from bp_doubt import bp as doubt_bp
+    from bp_diag import bp as diag_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(main_bp)
@@ -49,6 +50,7 @@ def create_app(config_object=Config):
     app.register_blueprint(errorlog_bp)
     app.register_blueprint(api_bp, url_prefix="/api")
     app.register_blueprint(doubt_bp, url_prefix="/api/doubt")
+    app.register_blueprint(diag_bp)
 
     return app
 
