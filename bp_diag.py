@@ -69,13 +69,16 @@ def diag(token):
 
 @bp.route("/setup/seed/<token>", methods=["POST", "GET"])
 def force_seed(token):
-    """Force-seed or update the admin user from env vars. Idempotent."""
+    """Force-seed or update the admin user.
+    Password source: ?password=... query param (overrides env), else EXAM_ADMIN_PASS.
+    Username source: ?username=... query param (overrides env), else EXAM_ADMIN_USER.
+    """
     if not _authorized(token):
         return jsonify({"error": "forbidden"}), 403
-    username = current_app.config.get("SEED_ADMIN_USER")
-    password = current_app.config.get("SEED_ADMIN_PASS")
+    username = request.args.get("username") or current_app.config.get("SEED_ADMIN_USER")
+    password = request.args.get("password") or current_app.config.get("SEED_ADMIN_PASS")
     if not (username and password):
-        return jsonify({"error": "EXAM_ADMIN_USER or EXAM_ADMIN_PASS not set"}), 400
+        return jsonify({"error": "username or password missing (pass via ?password= or set EXAM_ADMIN_PASS)"}), 400
 
     db = get_db()
     # Make sure users table exists
