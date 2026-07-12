@@ -5,7 +5,21 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn wsgi:app -b 0.0.0.0:10000 --timeout 120
     envVars:
+      # Turso — DB endpoint + auth token
       - key: TURSO_DB_URL
         value: libsql://exam-prep-db-pandit.aws-ap-south-1.turso.io
       - key: TURSO_AUTH_TOKEN
         sync: false
+      # Required — set in Render dashboard before first deploy of the refactor
+      - key: FLASK_SECRET_KEY
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      # Optional — bootstrap the first admin user on empty users table
+      - key: EXAM_ADMIN_USER
+        sync: false
+      - key: EXAM_ADMIN_PASS
+        sync: false
+      # Optional — cookie Secure flag (defaults to on when RENDER is set)
+      - key: COOKIE_SECURE
+        value: "1"
