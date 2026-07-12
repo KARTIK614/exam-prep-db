@@ -3,9 +3,9 @@ services:
     name: exam-prep-platform
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app -b 0.0.0.0:10000 --timeout 120
+    startCommand: gunicorn wsgi:app -b 0.0.0.0:10000 --timeout 120
     envVars:
       - key: TURSO_DB_URL
-        sync: false
+        value: libsql://exam-prep-db-pandit.aws-ap-south-1.turso.io
       - key: TURSO_AUTH_TOKEN
         sync: false
