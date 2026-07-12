@@ -1,0 +1,62 @@
+{% extends "admin/base.html" %}
+{% set active = 'flags' %}
+{% block title %}Flags{% endblock %}
+{% block content %}
+  <h2>Question Flags Queue</h2>
+  <div class="admin-card">
+    <div style="margin-bottom:12px">
+      <a href="/admin/flags?status=open" class="btn-sm {{ 'btn-primary' if status_filter=='open' else 'btn-outline' }}">Open</a>
+      <a href="/admin/flags?status=resolved" class="btn-sm {{ 'btn-primary' if status_filter=='resolved' else 'btn-outline' }}">Resolved</a>
+      <a href="/admin/flags?status=dismissed" class="btn-sm {{ 'btn-primary' if status_filter=='dismissed' else 'btn-outline' }}">Dismissed</a>
+      <a href="/admin/flags?status=all" class="btn-sm {{ 'btn-primary' if status_filter=='all' else 'btn-outline' }}">All</a>
+    </div>
+    {% if flags %}
+    <table class="admin-tbl">
+      <thead><tr><th>Cat.</th><th>Question</th><th>Correct</th><th>Note</th><th>Topic</th><th>Reporter</th><th>When</th><th>Actions</th></tr></thead>
+      <tbody>
+        {% for f in flags %}
+        <tr id="flag-row-{{ f.id }}">
+          <td><span class="flag-cat {{ f.category }}">{{ f.category }}</span></td>
+          <td>
+            <div style="font-weight:600">{{ (f.question_text or '(deleted)')[:180] }}</div>
+            <div style="font-size:11px;color:#6c7a94;margin-top:4px">
+              A: {{ (f.option_a or '')[:60] }} | B: {{ (f.option_b or '')[:60] }}<br>
+              C: {{ (f.option_c or '')[:60] }} | D: {{ (f.option_d or '')[:60] }}
+            </div>
+          </td>
+          <td><strong>{{ f.correct_option or '-' }}</strong></td>
+          <td style="max-width:200px">{{ f.note or '—' }}</td>
+          <td>{{ f.topic_name or '-' }}</td>
+          <td>{{ f.reporter or '-' }}</td>
+          <td style="white-space:nowrap;font-size:11px">{{ f.created_at }}</td>
+          <td style="white-space:nowrap">
+            {% if f.status == 'open' %}
+            <a class="btn-sm btn-outline" href="/admin/questions/{{ f.question_id }}/edit">Edit</a>
+            <button class="btn-sm btn-warning" onclick="flagAction({{ f.id }},'disable_question')">Disable Q</button>
+            <button class="btn-sm btn-success" onclick="flagAction({{ f.id }},'resolve')">Resolve</button>
+            <button class="btn-sm btn-outline" onclick="flagAction({{ f.id }},'dismiss')">Dismiss</button>
+            {% else %}
+              <em style="color:#6c7a94;font-size:12px">{{ f.status }}</em>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p style="color:#6c7a94">No flags matching this filter.</p>
+    {% endif %}
+  </div>
+  <script>
+    async function flagAction(id, action) {
+      const r = await fetch(`/admin/api/flag/${id}/${action}`, { method: 'POST' });
+      if (r.ok) {
+        const row = document.getElementById('flag-row-' + id);
+        if (row) row.style.opacity = '0.4';
+        setTimeout(() => location.reload(), 400);
+      } else {
+        alert('Action failed');
+      }
+    }
+  </script>
+{% endblock %}

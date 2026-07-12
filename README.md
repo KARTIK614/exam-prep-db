@@ -1,6 +1,6 @@
-# Exam Prep Platform
+# Exam Platform
 
-Diagnostic-first analytics platform for the Rajasthan Computer Anudeshak (Computer Instructor) competitive exam. Runs mock tests, logs errors by topic, tracks topic mastery over time, and (optionally) provides Gemini-backed doubt analysis against a corpus of study notes.
+Generic diagnostic analytics platform for MCQ-based exam prep. Runs mock tests, logs errors by topic, tracks topic mastery over time, and offers an admin panel that ingests questions from PDFs via Claude Sonnet 4.6. Originally built for the Rajasthan Computer Anudeshak exam; retooled to work with any subject.
 
 Live: `https://exam-prep-db.onrender.com`
 
@@ -10,10 +10,11 @@ Live: `https://exam-prep-db.onrender.com`
 
 - **Web**: Flask 3.x, Jinja2 templates, vanilla JS (no build step)
 - **Sessions**: `flask-session` (filesystem backend)
-- **Auth**: JWT (HS256) in an HttpOnly cookie, with a users table (bcrypt/scrypt password hashes)
+- **Auth**: JWT (HS256) in an HttpOnly cookie, with a users table (bcrypt/scrypt password hashes) and per-user roles (`admin` / `user`)
 - **DB**: SQLite locally; **Turso Cloud** (libSQL) in production via a pure-Python HTTP adapter (`turso_patch.py`) that monkey-patches `sqlite3.connect`
+- **LLM**: Anthropic Claude Sonnet 4.6 for PDF → question extraction (`ai_anthropic.py`), plus optional Gemini CLI for the doubt-chat feature
 - **Deploy**: Render (`gunicorn wsgi:app`)
-- **Tests**: pytest, 30 e2e + adapter tests
+- **Tests**: pytest, 43 e2e + adapter + admin + extraction tests
 
 ---
 
@@ -34,12 +35,16 @@ exam-prep-platform/
 ├── bp_tests.py            # /test/setup, /test/take, /test/finish, /results/<id>
 ├── bp_analytics.py        # /analytics
 ├── bp_errorlog.py         # /errorlog
-├── bp_api.py              # /api/* (JSON endpoints)
+├── bp_api.py              # /api/* (JSON endpoints, including /api/flag_question)
 ├── bp_doubt.py            # /api/doubt/deep-dive, /api/doubt/chat
-├── ai_config.py           # Static AI/notes maps
+├── bp_admin.py            # /admin/* — role='admin' only (flags queue, question CRUD, PDF upload)
+├── bp_diag.py             # /diag, /setup/seed — JWT-secret-gated bootstrap tools
+├── ai_config.py           # Static AI/notes maps for Gemini doubt-chat
 ├── ai_utils.py            # Gemini CLI wrapper + notes context lookup
+├── ai_anthropic.py        # Claude Sonnet 4.6 PDF → question extraction
 │
-├── templates/             # Jinja2 templates (7 pages)
+├── templates/             # Jinja2 templates
+│   └── admin/             # Admin panel templates (dashboard, flags, questions, uploads, ...)
 ├── static/                # script.js (fetch wrapper + UI helpers) + style.css
 ├── study-notes/           # Markdown corpus consumed by AI doubt engine
 ├── data/                  # exam_prep.db (dev), flask_session/
@@ -55,7 +60,8 @@ exam-prep-platform/
 | `FLASK_SECRET_KEY` | **prod: yes** | 64+ hex chars. Used for Flask session cookie signing. Fail-fast on Render if missing. |
 | `JWT_SECRET` | **prod: yes** | 64+ hex chars. Signs the auth JWT. Must be stable across gunicorn workers. |
 | `EXAM_ADMIN_USER` | prod: recommended | Used only on first boot when `users` table is empty. |
-| `EXAM_ADMIN_PASS` | prod: recommended | Plain-text password; hashed once and stored. Change via DB after seed. |
+| `EXAM_ADMIN_PASS` | prod: recommended | Plain-text password; hashed once and stored. Change via `/admin/users` after seed. |
+| `ANTHROPIC_API_KEY` | for PDF extraction | Enables the admin panel's PDF → question extraction. Without it, uploads show a clear error. |
 | `JWT_EXPIRY_HOURS` | no | Default 24. |
 | `COOKIE_SECURE` | no | `1` in prod (default when `RENDER=true`), `0` local. |
 | `TURSO_DB_URL` | prod: yes | `libsql://<db>.turso.io`. |
@@ -84,6 +90,24 @@ python3 app.py          # dev server on http://localhost:5050
 The first boot creates `data/exam_prep.db`, applies the schema, seeds ~42 topics + ~208 questions, and inserts your admin user with a hashed password.
 
 To wipe and start over: `rm data/exam_prep.db data/flask_session/*` then restart.
+
+---
+
+## Admin panel
+
+At `/admin/` (role='admin' users only). Sections:
+
+- **Dashboard** — flag/question/user counts + recent open flags
+- **Flags queue** — inline actions per flag: **Fix inline** (opens the question editor), **Disable question** (auto-resolves the flag and excludes the question from future tests), **Resolve**, **Dismiss**
+- **Questions** — filter by topic/paper/difficulty, edit any field, toggle `disabled`, delete
+- **Topics** — CRUD
+- **Users** — CRUD, change password, toggle role/active
+- **Master prompts** — edit the Claude extraction prompt live; version-tagged; multiple prompts per app for different subjects
+- **PDF Uploads** — upload a PDF, pick a topic + prompt, Claude extracts MCQs into strict JSON, admin previews and imports selected questions
+
+**Flag flow** (during a test): users click **⚑ Report issue** below any question → picks a category (data inconsistency / bad LaTeX / typo / wrong answer / other) + optional note → the flag lands in the admin flags queue. Scoring is unaffected.
+
+**Question exclusion**: setting `questions.disabled = 1` (via the flags queue or the question editor) prevents that question from being selected for future tests. Existing test history keeps its references.
 
 ---
 

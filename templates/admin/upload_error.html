@@ -1,0 +1,18 @@
+{% extends "admin/base.html" %}
+{% set active = 'uploads' %}
+{% block title %}Upload failed{% endblock %}
+{% block content %}
+  <h2>Extraction failed</h2>
+  <div class="admin-card">
+    <div style="background:#ffe0e0;color:#900;padding:16px;border-radius:6px;font-family:monospace">
+      {{ error }}
+    </div>
+    <p style="margin-top:16px;color:#6c7a94">
+      Fix the underlying issue (usually a missing <code>ANTHROPIC_API_KEY</code> or a PDF Claude couldn't read)
+      and try again.
+    </p>
+    <div class="actions">
+      <a class="btn-sm btn-primary" href="/admin/uploads">Back to uploads</a>
+    </div>
+  </div>
+{% endblock %}

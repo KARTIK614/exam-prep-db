@@ -1,0 +1,67 @@
+{% extends "admin/base.html" %}
+{% set active = 'uploads' %}
+{% block title %}PDF Uploads{% endblock %}
+{% block content %}
+  <h2>PDF Uploads</h2>
+
+  <div class="admin-card">
+    <h3 style="margin-top:0">Upload a PDF</h3>
+    <p style="color:#6c7a94;font-size:13px">Claude Sonnet 4.6 extracts questions directly from the PDF. Requires <code>ANTHROPIC_API_KEY</code> in the environment.</p>
+    <form method="POST" enctype="multipart/form-data">
+      <div class="form-row">
+        <label>Topic (optional)</label>
+        <select name="topic_id">
+          <option value="">— No topic yet —</option>
+          {% for t in topics %}<option value="{{ t.id }}">{{ t.name }} ({{ t.paper }})</option>{% endfor %}
+        </select>
+      </div>
+      <div class="form-row">
+        <label>Master prompt</label>
+        <select name="prompt_name">
+          {% for p in prompts %}<option value="{{ p.name }}" {{ 'selected' if p.is_default }}>{{ p.name }} ({{ p.model }}){{ ' — DEFAULT' if p.is_default }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="form-row">
+        <label>PDF file</label>
+        <input type="file" name="pdf" accept="application/pdf" required>
+      </div>
+      <div class="actions">
+        <button type="submit" class="btn-sm btn-primary">Upload &amp; extract</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="admin-card">
+    <h3 style="margin-top:0">Recent uploads</h3>
+    {% if uploads %}
+    <table class="admin-tbl">
+      <thead><tr><th>File</th><th>Topic</th><th>Model</th><th>Extracted</th><th>Imported</th><th>Status</th><th>When</th><th></th></tr></thead>
+      <tbody>
+        {% for u in uploads %}
+        <tr>
+          <td>{{ u.filename }}</td>
+          <td>{{ u.topic_name or '-' }}</td>
+          <td>{{ u.model or '-' }}</td>
+          <td>{{ u.num_extracted }}</td>
+          <td>{{ u.num_imported }}</td>
+          <td>
+            {% if u.status == 'error' %}<span class="flag-cat data_inconsistency">error</span>
+            {% elif u.status == 'imported' %}<span class="flag-cat typo">imported</span>
+            {% elif u.status == 'extracted' %}<span class="flag-cat bad_latex">awaiting review</span>
+            {% else %}<span class="flag-cat other">{{ u.status }}</span>{% endif %}
+          </td>
+          <td style="font-size:11px">{{ u.uploaded_at }}</td>
+          <td>
+            {% if u.status == 'extracted' %}
+            <a class="btn-sm btn-primary" href="/admin/uploads/{{ u.id }}/preview">Review</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p style="color:#6c7a94">No uploads yet.</p>
+    {% endif %}
+  </div>
+{% endblock %}

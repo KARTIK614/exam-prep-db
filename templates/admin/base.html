@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Admin{% endblock %} — Exam Platform</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    .admin-body { display: flex; min-height: 100vh; }
+    .admin-nav { background: #0e1729; color: #dfe7f5; width: 220px; padding: 20px 0; flex-shrink: 0; }
+    .admin-nav h1 { padding: 0 20px 20px; font-size: 18px; color: #fff; border-bottom: 1px solid #253148; margin-bottom: 12px; }
+    .admin-nav h1 small { display:block; font-size: 11px; color:#8ea3c6; font-weight: 400; margin-top:2px; }
+    .admin-nav a { display: block; padding: 10px 20px; color: #b6c4dc; text-decoration: none; font-size: 14px; }
+    .admin-nav a:hover, .admin-nav a.active { background: #1a2540; color: #fff; }
+    .admin-nav .badge-count { background: #f47920; color:#fff; border-radius: 10px; padding: 1px 8px; font-size: 11px; margin-left: 6px; }
+    .admin-nav .logout-link { color: #ff6b6b; margin-top: 24px; border-top: 1px solid #253148; padding-top: 16px; }
+    .admin-main { flex: 1; padding: 30px 40px; background: #f5f7fb; }
+    .admin-main h2 { color: #0e1729; margin: 0 0 20px; font-size: 22px; }
+    .admin-card { background:#fff; border-radius: 10px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+    .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .stat-block { background:#fff; padding: 16px 20px; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.03); }
+    .stat-block .num { font-size: 26px; font-weight: 700; color:#0e1729; }
+    .stat-block .lbl { font-size: 12px; color: #6c7a94; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+    table.admin-tbl { width:100%; border-collapse: collapse; background:#fff; }
+    table.admin-tbl th, table.admin-tbl td { padding: 10px 12px; text-align:left; border-bottom: 1px solid #eef1f7; font-size: 13px; vertical-align: top; }
+    table.admin-tbl th { background: #f8f9fc; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color:#6c7a94; }
+    table.admin-tbl tr:hover td { background: #f8f9fc; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; border-radius: 4px; border: none; cursor: pointer; margin-right: 4px; }
+    .btn-primary { background: #7b2d8b; color:#fff; }
+    .btn-outline { background: #fff; border: 1px solid #d0d7e5 !important; color: #0e1729; }
+    .btn-danger { background: #d32f2f; color:#fff; }
+    .btn-success { background: #2e7d32; color:#fff; }
+    .btn-warning { background: #f9a825; color:#fff; }
+    .flag-cat { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+    .flag-cat.data_inconsistency { background:#ffe0e0; color:#c00; }
+    .flag-cat.bad_latex { background:#fff3d6; color:#7a5a00; }
+    .flag-cat.typo { background:#e0edff; color:#054695; }
+    .flag-cat.wrong_answer { background:#ffd6d6; color:#900; }
+    .flag-cat.other { background:#eee; color:#333; }
+    input[type=text], input[type=password], input[type=number], select, textarea {
+      padding: 8px 10px; border: 1px solid #d0d7e5; border-radius: 6px; font-size: 13px; font-family: inherit; width: 100%; box-sizing: border-box;
+    }
+    textarea { min-height: 90px; }
+    .form-row { display: grid; grid-template-columns: 180px 1fr; gap: 10px; margin-bottom: 12px; align-items: center; }
+    .form-row label { font-size: 13px; color: #6c7a94; font-weight: 600; }
+    .actions { display: flex; gap: 8px; }
+  </style>
+</head>
+<body class="admin-body">
+  <aside class="admin-nav">
+    <h1>Exam Platform<small>Admin Panel</small></h1>
+    <a href="/admin" class="{{ 'active' if active == 'dashboard' }}">Dashboard</a>
+    <a href="/admin/flags" class="{{ 'active' if active == 'flags' }}">Flags Queue{% if stats and stats.flags_open %}<span class="badge-count">{{ stats.flags_open }}</span>{% endif %}</a>
+    <a href="/admin/questions" class="{{ 'active' if active == 'questions' }}">Questions</a>
+    <a href="/admin/topics" class="{{ 'active' if active == 'topics' }}">Topics</a>
+    <a href="/admin/uploads" class="{{ 'active' if active == 'uploads' }}">PDF Uploads</a>
+    <a href="/admin/prompts" class="{{ 'active' if active == 'prompts' }}">Master Prompts</a>
+    <a href="/admin/users" class="{{ 'active' if active == 'users' }}">Users</a>
+    <a href="/" style="margin-top:20px">&larr; Back to app</a>
+    <a href="/logout" class="logout-link">Logout</a>
+  </aside>
+  <main class="admin-main">
+    {% block content %}{% endblock %}
+  </main>
+  <script src="/static/script.js"></script>
+</body>
+</html>

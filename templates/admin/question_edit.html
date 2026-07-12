@@ -1,0 +1,42 @@
+{% extends "admin/base.html" %}
+{% set active = 'questions' %}
+{% block title %}Edit Question #{{ q.id }}{% endblock %}
+{% block content %}
+  <h2>Edit Question #{{ q.id }}</h2>
+  <div class="admin-card">
+    <form method="POST">
+      <div class="form-row"><label>Topic</label>
+        <select name="topic_id">
+          {% for t in topics %}<option value="{{ t.id }}" {{ 'selected' if q.topic_id==t.id }}>{{ t.name }} ({{ t.paper }})</option>{% endfor %}
+        </select>
+      </div>
+      <div class="form-row"><label>Question text</label>
+        <textarea name="question_text" required>{{ q.question_text or '' }}</textarea>
+      </div>
+      <div class="form-row"><label>Option A</label><input type="text" name="option_a" value="{{ q.option_a or '' }}"></div>
+      <div class="form-row"><label>Option B</label><input type="text" name="option_b" value="{{ q.option_b or '' }}"></div>
+      <div class="form-row"><label>Option C</label><input type="text" name="option_c" value="{{ q.option_c or '' }}"></div>
+      <div class="form-row"><label>Option D</label><input type="text" name="option_d" value="{{ q.option_d or '' }}"></div>
+      <div class="form-row"><label>Correct option</label>
+        <select name="correct_option">
+          {% for opt in ['A','B','C','D'] %}<option value="{{ opt }}" {{ 'selected' if q.correct_option==opt }}>{{ opt }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="form-row"><label>Difficulty</label>
+        <select name="difficulty">
+          {% for d in ['easy','medium','hard'] %}<option value="{{ d }}" {{ 'selected' if q.difficulty==d }}>{{ d }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="form-row"><label>Explanation</label>
+        <textarea name="explanation">{{ q.explanation or '' }}</textarea>
+      </div>
+      <div class="form-row"><label>Disabled</label>
+        <label style="font-weight:400"><input type="checkbox" name="disabled" {{ 'checked' if q.disabled }}> Exclude from tests</label>
+      </div>
+      <div class="actions">
+        <button type="submit" class="btn-sm btn-primary">Save</button>
+        <a class="btn-sm btn-outline" href="/admin/questions">Cancel</a>
+      </div>
+    </form>
+  </div>
+{% endblock %}

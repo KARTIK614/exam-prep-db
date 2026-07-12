@@ -1,0 +1,35 @@
+{% extends "admin/base.html" %}
+{% set active = 'topics' %}
+{% block title %}Topics{% endblock %}
+{% block content %}
+  <h2>Topics</h2>
+  <div class="admin-card">
+    <form method="POST" style="display:grid;grid-template-columns:2fr 1fr 100px 100px auto;gap:10px;align-items:end;margin-bottom:16px">
+      <div><label style="font-size:11px;color:#6c7a94">Name</label><input type="text" name="name" required></div>
+      <div><label style="font-size:11px;color:#6c7a94">Subject</label><input type="text" name="subject"></div>
+      <div><label style="font-size:11px;color:#6c7a94">Paper</label><input type="text" name="paper" placeholder="I / II"></div>
+      <div><label style="font-size:11px;color:#6c7a94">Weightage</label><input type="number" name="weightage" value="5"></div>
+      <button type="submit" class="btn-sm btn-primary">Add topic</button>
+    </form>
+    <table class="admin-tbl">
+      <thead><tr><th>ID</th><th>Name</th><th>Subject</th><th>Paper</th><th>Weightage</th><th>Questions</th><th></th></tr></thead>
+      <tbody>
+        {% for t in topics %}
+        <tr>
+          <td>{{ t.id }}</td>
+          <td>{{ t.name }}</td>
+          <td>{{ t.subject or '-' }}</td>
+          <td>{{ t.paper or '-' }}</td>
+          <td>{{ t.weightage }}</td>
+          <td>{{ t.n_questions }}</td>
+          <td>
+            <form method="POST" action="/admin/topics/{{ t.id }}/delete" style="display:inline" onsubmit="return confirm('Delete topic and all its questions?');">
+              <button type="submit" class="btn-sm btn-danger">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

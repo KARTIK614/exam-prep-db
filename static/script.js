@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════
-   Computer Anudeshak Exam Prep Platform — Frontend JS
+   Exam Platform — Frontend JS
    ═══════════════════════════════════════════════════════════ */
 
 // Global 401 handler: any fetch that comes back Unauthorized redirects to /login.

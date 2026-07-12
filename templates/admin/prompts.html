@@ -1,0 +1,54 @@
+{% extends "admin/base.html" %}
+{% set active = 'prompts' %}
+{% block title %}Master Prompts{% endblock %}
+{% block content %}
+  <h2>Master Prompts</h2>
+  <p style="color:#6c7a94">These prompts drive PDF → question extraction. The default prompt is used unless you pick a different one at upload time.</p>
+
+  {% for p in prompts %}
+  <div class="admin-card">
+    <form method="POST">
+      <input type="hidden" name="name" value="{{ p.name }}">
+      <div class="form-row"><label>Name</label>
+        <div style="display:flex;gap:12px;align-items:center">
+          <input type="text" value="{{ p.name }}" disabled style="max-width:300px">
+          {% if p.is_default %}<span class="flag-cat typo">DEFAULT</span>{% endif %}
+        </div>
+      </div>
+      <div class="form-row"><label>Model</label>
+        <select name="model">
+          <option value="claude-sonnet-4-6" {{ 'selected' if p.model=='claude-sonnet-4-6' }}>claude-sonnet-4-6 (fast, cheap)</option>
+          <option value="claude-opus-4-7" {{ 'selected' if p.model=='claude-opus-4-7' }}>claude-opus-4-7 (best quality)</option>
+          <option value="claude-haiku-4-5-20251001" {{ 'selected' if p.model=='claude-haiku-4-5-20251001' }}>claude-haiku-4-5 (cheapest)</option>
+        </select>
+      </div>
+      <div class="form-row"><label>Template</label>
+        <textarea name="template" rows="18" style="font-family:'SF Mono',Monaco,monospace;font-size:12px">{{ p.template }}</textarea>
+      </div>
+      <div class="form-row"><label>Default</label>
+        <label style="font-weight:400"><input type="checkbox" name="is_default" {{ 'checked' if p.is_default }}> Use as default extraction prompt</label>
+      </div>
+      <div class="actions">
+        <button type="submit" class="btn-sm btn-primary">Save</button>
+      </div>
+    </form>
+  </div>
+  {% endfor %}
+
+  <div class="admin-card">
+    <h3 style="margin-top:0">Add new prompt</h3>
+    <form method="POST">
+      <div class="form-row"><label>Name</label><input type="text" name="name" placeholder="e.g. neet-biology" required></div>
+      <div class="form-row"><label>Model</label>
+        <select name="model">
+          <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
+          <option value="claude-opus-4-7">claude-opus-4-7</option>
+          <option value="claude-haiku-4-5-20251001">claude-haiku-4-5</option>
+        </select>
+      </div>
+      <div class="form-row"><label>Template</label><textarea name="template" rows="10" required></textarea></div>
+      <div class="form-row"><label>Default</label><label style="font-weight:400"><input type="checkbox" name="is_default"> Set as default</label></div>
+      <div class="actions"><button type="submit" class="btn-sm btn-primary">Create</button></div>
+    </form>
+  </div>
+{% endblock %}

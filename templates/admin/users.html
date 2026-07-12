@@ -1,0 +1,51 @@
+{% extends "admin/base.html" %}
+{% set active = 'users' %}
+{% block title %}Users{% endblock %}
+{% block content %}
+  <h2>Users</h2>
+  <div class="admin-card">
+    <h3 style="margin-top:0">Add user</h3>
+    <form method="POST" style="display:grid;grid-template-columns:1fr 1fr 130px auto;gap:10px;align-items:end;margin-bottom:16px">
+      <div><label style="font-size:11px;color:#6c7a94">Username</label><input type="text" name="username" required></div>
+      <div><label style="font-size:11px;color:#6c7a94">Password</label><input type="password" name="password" required></div>
+      <div><label style="font-size:11px;color:#6c7a94">Role</label><select name="role"><option value="user">user</option><option value="admin">admin</option></select></div>
+      <button type="submit" class="btn-sm btn-primary">Create</button>
+    </form>
+
+    <table class="admin-tbl">
+      <thead><tr><th>ID</th><th>Username</th><th>Role</th><th>Active</th><th>Created</th><th>Last login</th><th>Actions</th></tr></thead>
+      <tbody>
+        {% for u in users %}
+        <tr>
+          <td>{{ u.id }}</td>
+          <td>{{ u.username }}</td>
+          <td>
+            <form method="POST" action="/admin/users/{{ u.id }}/update" style="display:flex;gap:6px">
+              <select name="role" onchange="this.form.submit()">
+                <option value="user" {{ 'selected' if u.role == 'user' }}>user</option>
+                <option value="admin" {{ 'selected' if u.role == 'admin' }}>admin</option>
+              </select>
+            </form>
+          </td>
+          <td>
+            <form method="POST" action="/admin/users/{{ u.id }}/update">
+              <select name="is_active" onchange="this.form.submit()">
+                <option value="1" {{ 'selected' if u.is_active }}>Active</option>
+                <option value="0" {{ 'selected' if not u.is_active }}>Disabled</option>
+              </select>
+            </form>
+          </td>
+          <td style="font-size:11px">{{ u.created_at }}</td>
+          <td style="font-size:11px">{{ u.last_login or '-' }}</td>
+          <td>
+            <form method="POST" action="/admin/users/{{ u.id }}/update" style="display:flex;gap:6px">
+              <input type="password" name="password" placeholder="new pw" style="width:120px">
+              <button type="submit" class="btn-sm btn-outline">Set</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

@@ -42,6 +42,7 @@ def create_app(config_object=Config):
     from bp_api import bp as api_bp
     from bp_doubt import bp as doubt_bp
     from bp_diag import bp as diag_bp
+    from bp_admin import bp as admin_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(main_bp)
@@ -51,6 +52,7 @@ def create_app(config_object=Config):
     app.register_blueprint(api_bp, url_prefix="/api")
     app.register_blueprint(doubt_bp, url_prefix="/api/doubt")
     app.register_blueprint(diag_bp)
+    app.register_blueprint(admin_bp)
 
     return app
 
@@ -79,7 +81,7 @@ app = create_app()
 
 if __name__ == "__main__":
     print("\n" + "=" * 56)
-    print("  Computer Anudeshak Exam Prep Platform")
+    print("  Exam Platform")
     print("  Running at: http://localhost:5050")
     print("=" * 56 + "\n")
     app.run(debug=False, port=5050, host="127.0.0.1")

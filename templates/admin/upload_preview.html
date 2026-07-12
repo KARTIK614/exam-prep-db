@@ -1,0 +1,52 @@
+{% extends "admin/base.html" %}
+{% set active = 'uploads' %}
+{% block title %}Review upload #{{ upload.id }}{% endblock %}
+{% block content %}
+  <h2>Review extraction — {{ upload.filename }}</h2>
+  <p style="color:#6c7a94">
+    {{ questions|length }} questions extracted. Check the rows you want to import into
+    <strong>{{ upload.topic_id and 'topic #' + upload.topic_id|string or 'no topic' }}</strong>,
+    then click Import. Uncheck anything with bad math, wrong answers, or that looks corrupt.
+  </p>
+
+  <div class="admin-card">
+    <form method="POST" action="/admin/uploads/{{ upload.id }}/import">
+      <div style="margin-bottom:12px">
+        <button type="button" class="btn-sm btn-outline" onclick="document.querySelectorAll('input[name=selected]').forEach(c=>c.checked=true)">Select all</button>
+        <button type="button" class="btn-sm btn-outline" onclick="document.querySelectorAll('input[name=selected]').forEach(c=>c.checked=false)">Select none</button>
+        <button type="button" class="btn-sm btn-outline" onclick="document.querySelectorAll('input[name=selected]').forEach(c=>{const row=c.closest('tr');c.checked=row.dataset.conf==='high'})">Only high-confidence</button>
+      </div>
+
+      <table class="admin-tbl">
+        <thead><tr><th>✓</th><th>Question</th><th>Options</th><th>Ans</th><th>Diff</th><th>Conf</th><th>Notes</th></tr></thead>
+        <tbody>
+          {% for q in questions %}
+          <tr data-conf="{{ q.confidence }}">
+            <td><input type="checkbox" name="selected" value="{{ loop.index0 }}" {{ 'checked' if q.confidence == 'high' }}></td>
+            <td style="max-width:400px;font-size:12px">{{ q.question_text[:400] }}{% if q.question_text|length > 400 %}…{% endif %}</td>
+            <td style="font-size:11px">
+              <strong>A:</strong> {{ q.option_a[:60] }}<br>
+              <strong>B:</strong> {{ q.option_b[:60] }}<br>
+              <strong>C:</strong> {{ q.option_c[:60] }}<br>
+              <strong>D:</strong> {{ q.option_d[:60] }}
+            </td>
+            <td><strong>{{ q.correct_option or '?' }}</strong></td>
+            <td>{{ q.difficulty }}</td>
+            <td>
+              {% if q.confidence == 'high' %}<span class="flag-cat typo">high</span>
+              {% elif q.confidence == 'medium' %}<span class="flag-cat bad_latex">medium</span>
+              {% else %}<span class="flag-cat data_inconsistency">low</span>{% endif %}
+            </td>
+            <td style="font-size:11px;color:#6c7a94">{{ q.notes or '' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <div style="margin-top:16px" class="actions">
+        <button type="submit" class="btn-sm btn-primary">Import selected</button>
+        <a class="btn-sm btn-outline" href="/admin/uploads">Cancel</a>
+      </div>
+    </form>
+  </div>
+{% endblock %}

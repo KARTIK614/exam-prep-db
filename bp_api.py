@@ -1,11 +1,44 @@
 """API blueprint — small JSON endpoints for the frontend. url_prefix='/api'."""
 import time
 from datetime import datetime
-from flask import Blueprint, request, jsonify, session
+from flask import Blueprint, request, jsonify, session, g
 
 from db import get_db
 
 bp = Blueprint("api", __name__)
+
+FLAG_CATEGORIES = {"data_inconsistency", "bad_latex", "typo", "wrong_answer", "other"}
+
+
+@bp.route("/flag_question", methods=["POST"])
+def flag_question():
+    """Report an issue with a question during a test. Doesn't affect scoring."""
+    data = request.json or {}
+    question_id = data.get("question_id")
+    category = data.get("category", "other")
+    note = (data.get("note") or "").strip()[:1000]
+    test_id = data.get("test_id") or session.get("test_id")
+
+    if not question_id:
+        return jsonify({"error": "question_id is required"}), 400
+    if category not in FLAG_CATEGORIES:
+        category = "other"
+
+    db = get_db()
+    db.execute(
+        "INSERT INTO question_flags (question_id, test_id, reporter, category, note, status, created_at) "
+        "VALUES (?, ?, ?, ?, ?, 'open', ?)",
+        (
+            int(question_id),
+            int(test_id) if test_id else None,
+            getattr(g, "user", None),
+            category,
+            note,
+            datetime.utcnow().isoformat(),
+        ),
+    )
+    db.commit()
+    return jsonify({"status": "ok"})
 
 
 @bp.route("/question/<int:idx>")

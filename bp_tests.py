@@ -23,7 +23,8 @@ def setup():
 
         query = (
             "SELECT q.*, t.name as topic_name FROM questions q "
-            "JOIN topics t ON q.topic_id = t.id WHERE 1=1"
+            "JOIN topics t ON q.topic_id = t.id "
+            "WHERE (q.disabled IS NULL OR q.disabled = 0)"
         )
         params = []
 

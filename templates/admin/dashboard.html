@@ -1,0 +1,36 @@
+{% extends "admin/base.html" %}
+{% set active = 'dashboard' %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+  <h2>Admin Dashboard</h2>
+  <div class="stat-grid">
+    <div class="stat-block"><div class="num">{{ stats.flags_open }}</div><div class="lbl">Open Flags</div></div>
+    <div class="stat-block"><div class="num">{{ stats.questions }}</div><div class="lbl">Questions</div></div>
+    <div class="stat-block"><div class="num">{{ stats.questions_disabled }}</div><div class="lbl">Disabled</div></div>
+    <div class="stat-block"><div class="num">{{ stats.topics }}</div><div class="lbl">Topics</div></div>
+    <div class="stat-block"><div class="num">{{ stats.users }}</div><div class="lbl">Users</div></div>
+    <div class="stat-block"><div class="num">{{ stats.uploads }}</div><div class="lbl">PDF Uploads</div></div>
+  </div>
+
+  <div class="admin-card">
+    <h3 style="margin-top:0">Recent Open Flags</h3>
+    {% if recent_flags %}
+    <table class="admin-tbl">
+      <thead><tr><th>Category</th><th>Question</th><th>Reporter</th><th>When</th><th></th></tr></thead>
+      <tbody>
+        {% for f in recent_flags %}
+        <tr>
+          <td><span class="flag-cat {{ f.category }}">{{ f.category }}</span></td>
+          <td>{{ (f.question_text or '(question deleted)')[:120] }}...</td>
+          <td>{{ f.reporter or '-' }}</td>
+          <td>{{ f.created_at }}</td>
+          <td><a class="btn-sm btn-outline" href="/admin/flags">Review</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p style="color:#6c7a94">No open flags. Nice.</p>
+    {% endif %}
+  </div>
+{% endblock %}

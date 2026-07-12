@@ -45,6 +45,38 @@ def get_user(username: str):
     ).fetchone()
 
 
+def get_user_by_name(username: str):
+    """Fetch a user including inactive rows — used by admin CRUD."""
+    from db import get_db
+    return get_db().execute(
+        "SELECT * FROM users WHERE username=?",
+        (username,),
+    ).fetchone()
+
+
+def current_role():
+    """Return the role of the logged-in user (or None)."""
+    from db import get_db
+    username = getattr(g, "user", None)
+    if not username:
+        return None
+    row = get_db().execute("SELECT role FROM users WHERE username=?", (username,)).fetchone()
+    return row["role"] if row else None
+
+
+def require_admin(f):
+    """Decorator: 403 for non-admin users."""
+    import functools
+    @functools.wraps(f)
+    def wrapped(*args, **kwargs):
+        if current_role() != "admin":
+            if request.path.startswith("/api/") or request.path.startswith("/admin/api/"):
+                return jsonify({"error": "forbidden"}), 403
+            return _reject()
+        return f(*args, **kwargs)
+    return wrapped
+
+
 def touch_last_login(username: str):
     from db import get_db
     db = get_db()
