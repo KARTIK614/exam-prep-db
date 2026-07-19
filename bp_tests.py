@@ -24,20 +24,32 @@ def setup():
         if test_mode not in {"practice", "exam"}:
             test_mode = "practice"
 
-        # Negative marking is only meaningful in Exam Mode. Read the default
-        # ratio from settings when the user leaves the field blank.
-        neg_marking_on = request.form.get("neg_marking") == "on"
-        if test_mode == "exam" and neg_marking_on:
-            try:
-                negative_ratio = float(
-                    request.form.get("negative_ratio")
-                    or (db.execute(
-                        "SELECT value FROM settings WHERE key='default_neg_ratio'"
-                    ).fetchone() or [None])[0]
-                    or 0.333333
-                )
-            except (TypeError, ValueError):
-                negative_ratio = 0.333333
+        # Negative marking is only meaningful in Exam Mode. The setup form now
+        # ships a `neg_marking_preset` radio (none / third / quarter / fifth /
+        # custom) instead of a separate on/off checkbox — "none" = disabled,
+        # "custom" reads the freeform `negative_ratio` decimal. Defaults to
+        # 1/3 (BCI/RPSC) when the preset field is missing.
+        NEG_PRESETS = {
+            "none": 0.0,
+            "third": 1.0 / 3.0,
+            "quarter": 0.25,
+            "fifth": 0.20,
+        }
+        if test_mode == "exam":
+            preset = (request.form.get("neg_marking_preset") or "third").strip().lower()
+            if preset == "custom":
+                try:
+                    negative_ratio = float(
+                        request.form.get("negative_ratio")
+                        or (db.execute(
+                            "SELECT value FROM settings WHERE key='default_neg_ratio'"
+                        ).fetchone() or [None])[0]
+                        or 0.333333
+                    )
+                except (TypeError, ValueError):
+                    negative_ratio = 0.333333
+            else:
+                negative_ratio = NEG_PRESETS.get(preset, 1.0 / 3.0)
             # Clamp to [0, 1].
             negative_ratio = max(0.0, min(1.0, negative_ratio))
         else:

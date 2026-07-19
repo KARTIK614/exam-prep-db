@@ -125,9 +125,16 @@
             &nbsp;({{ "%.1f"|format(test.score or 0) }}%)
           </div>
           <div style="font-size:13px;color:var(--text-muted);margin-top:6px">
-            Penalty applied per wrong answer:
-            {{ "%.3f"|format(neg_ratio) }}
-            {% if neg_ratio == 0.333333 %} (⅓ — BCI standard){% endif %}.
+            {# Match the ratio back to the preset label so users see which
+               scheme was applied. Floats compared with a tight tolerance to
+               tolerate rounding drift from the 1/3 preset. #}
+            {% set _preset_label = 'Custom penalty' %}
+            {% if (neg_ratio - 0.333333) | abs < 0.0005 %}{% set _preset_label = '1/3 penalty applied (BCI, RPSC)' %}
+            {% elif (neg_ratio - 0.25) | abs < 0.0005 %}{% set _preset_label = '1/4 penalty applied (SSC)' %}
+            {% elif (neg_ratio - 0.20) | abs < 0.0005 %}{% set _preset_label = '1/5 penalty applied (some IBPS)' %}
+            {% endif %}
+            <strong>{{ _preset_label }}</strong> &middot;
+            penalty per wrong answer: {{ "%.3f"|format(neg_ratio) }}.
             Unanswered questions ({{ unanswered_count }}) carry no penalty.
           </div>
         </div>
@@ -348,8 +355,14 @@
 
         document.getElementById('dd-loading').style.display = 'none';
         if (data.error) {
-          document.getElementById('dd-error').textContent = data.error;
-          document.getElementById('dd-error').style.display = 'block';
+          const errBox = document.getElementById('dd-error');
+          errBox.innerHTML = '';
+          errBox.appendChild(document.createTextNode(data.error));
+          if (data.error_id) {
+            errBox.appendChild(document.createTextNode(' '));
+            errBox.appendChild(buildErrorRef(data.error_id));
+          }
+          errBox.style.display = 'block';
           return;
         }
 
@@ -396,11 +409,56 @@
         });
         const data = await resp.json();
         const waiting = document.getElementById('chat-waiting');
-        if (waiting) waiting.outerHTML = '<div class="chat-msg ai"><strong>Tutor:</strong> ' + markdownToHtml(data.response || data.error || 'No response.') + '</div>';
+        if (waiting) {
+          if (data.response) {
+            waiting.outerHTML = '<div class="chat-msg ai"><strong>Tutor:</strong> ' + markdownToHtml(data.response) + '</div>';
+          } else if (data.error) {
+            // Server-formatted friendly error; append a copy-to-clipboard ref badge.
+            const wrap = document.createElement('div');
+            wrap.className = 'chat-msg ai';
+            wrap.style.color = 'var(--danger)';
+            const label = document.createElement('strong');
+            label.textContent = 'Error: ';
+            wrap.appendChild(label);
+            wrap.appendChild(document.createTextNode(data.error));
+            if (data.error_id) {
+              wrap.appendChild(document.createTextNode(' '));
+              wrap.appendChild(buildErrorRef(data.error_id));
+            }
+            waiting.replaceWith(wrap);
+          } else {
+            waiting.outerHTML = '<div class="chat-msg ai"><em>No response.</em></div>';
+          }
+        }
       } catch (e) {
         const waiting = document.getElementById('chat-waiting');
         if (waiting) waiting.outerHTML = '<div class="chat-msg ai" style="color:var(--danger)"><strong>Error:</strong> Failed to get response.</div>';
       }
+    }
+
+    // Build the ref-id badge (mirrors templates/_error_ref.html) with a
+    // copy-to-clipboard click handler. Returns a DOM node the caller appends.
+    function buildErrorRef(errorId) {
+      const badge = document.createElement('span');
+      badge.className = 'error-ref';
+      badge.title = 'Copy reference ID';
+      badge.style.cssText =
+        'display:inline-flex;align-items:center;gap:6px;padding:2px 8px;' +
+        'background:rgba(220,38,38,0.08);border:1px solid rgba(220,38,38,0.25);' +
+        'border-radius:4px;font-family:monospace;font-size:12px;cursor:pointer;margin-left:6px';
+      badge.innerHTML =
+        '<span aria-hidden="true">&#128203;</span>' +
+        '<span>Ref:</span>' +
+        '<span class="error-ref-id"><strong></strong></span>';
+      badge.querySelector('.error-ref-id strong').textContent = errorId;
+      badge.addEventListener('click', () => {
+        if (navigator.clipboard) navigator.clipboard.writeText(errorId).catch(() => {});
+        const inner = badge.querySelector('.error-ref-id');
+        const orig = inner.textContent;
+        inner.textContent = 'copied!';
+        setTimeout(() => { inner.textContent = orig; }, 1200);
+      });
+      return badge;
     }
 
     function markdownToHtml(text) {

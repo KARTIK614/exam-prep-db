@@ -25,6 +25,8 @@ class Config:
     SEED_ADMIN_USER = os.environ.get("EXAM_ADMIN_USER", "admin")
     SEED_ADMIN_PASS = os.environ.get("EXAM_ADMIN_PASS")
 
-    # Notes / AI (Gemini CLI)
+    # Notes / AI. Gemini is called via the Generative Language REST API using
+    # `GEMINI_API_KEY` (read at call time in ai_utils.call_gemini) — no CLI
+    # binary needed. `GEMINI_MODEL` is an optional override (defaults to
+    # gemini-2.5-flash in ai_utils).
     NOTES_DIR = os.path.join(BASE_DIR, "study-notes")
-    GEMINI_CLI = os.environ.get("GEMINI_CLI", "")

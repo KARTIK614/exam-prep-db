@@ -1,0 +1,24 @@
+{#
+  Reusable error-ref badge — pass `error_id` to render.
+  Usage: {% include '_error_ref.html' with context %}   (variable `error_id` in scope)
+  Or render inline via the copyErrorRef() JS helper for dynamic (fetch-driven) errors.
+#}
+{% if error_id %}
+<span class="error-ref" data-error-id="{{ error_id }}"
+      title="Copy reference ID"
+      style="display:inline-flex;align-items:center;gap:6px;padding:2px 8px;
+             background:rgba(220,38,38,0.08);border:1px solid rgba(220,38,38,0.25);
+             border-radius:4px;font-family:monospace;font-size:12px;cursor:pointer"
+      onclick="(function(el){
+        const id = el.dataset.errorId;
+        (navigator.clipboard && navigator.clipboard.writeText(id)) || Promise.resolve();
+        const orig = el.dataset.origLabel || el.querySelector('.error-ref-id').textContent;
+        el.dataset.origLabel = orig;
+        el.querySelector('.error-ref-id').textContent = 'copied!';
+        setTimeout(() => { el.querySelector('.error-ref-id').textContent = orig; }, 1200);
+      })(this)">
+  <span aria-hidden="true">&#128203;</span>
+  <span>Ref:</span>
+  <span class="error-ref-id"><strong>{{ error_id }}</strong></span>
+</span>
+{% endif %}

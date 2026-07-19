@@ -1,13 +1,24 @@
 """Doubt blueprint — AI deep-dive + follow-up chat. url_prefix='/api/doubt'."""
 import json
 import re
+import uuid
 from datetime import datetime
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 
 from db import get_db
 from ai_utils import get_notes_context, call_gemini, get_chat_history, append_chat
 
 bp = Blueprint("doubt", __name__)
+
+
+def _new_error_id():
+    return uuid.uuid4().hex[:8]
+
+
+def _friendly_ai_error(error_id):
+    """Standard user-facing message. Never include the actual exception here —
+    the real cause lives in server logs under [error_id]."""
+    return f"AI tutor temporarily unavailable. Ref: {error_id}"
 
 
 @bp.route("/deep-dive", methods=["POST"])
@@ -66,7 +77,19 @@ Give a structured response with these exact sections:
 
 Use markdown formatting. Keep each section concise but thorough. IMPORTANT: Write the ENTIRE response in English only. Do NOT use Hindi or any other language.'''
 
-    response = call_gemini(prompt)
+    # Wrap the LLM call: log real exception with an error_id, return a
+    # user-friendly message with the same id so users can quote it.
+    try:
+        response = call_gemini(prompt)
+    except Exception as exc:  # noqa: BLE001 — any AI failure is user-facing
+        error_id = _new_error_id()
+        current_app.logger.exception(
+            f"[{error_id}] deep-dive failed for qid={question_id} tid={test_id}"
+        )
+        return jsonify({
+            "error": _friendly_ai_error(error_id),
+            "error_id": error_id,
+        }), 502
 
     analysis = {
         "explanation": "",
@@ -168,7 +191,17 @@ User's new question: {message}
 
 Provide a clear, exam-focused answer. Reference study material and Rajasthan-specific context where relevant. Keep it 2-3 paragraphs. Use markdown. IMPORTANT: Write in English only. Do NOT use Hindi or any other language.'''
 
-    response = call_gemini(prompt, timeout=45)
+    try:
+        response = call_gemini(prompt, timeout=45)
+    except Exception as exc:  # noqa: BLE001 — surface as friendly error
+        error_id = _new_error_id()
+        current_app.logger.exception(
+            f"[{error_id}] chat failed for qid={question_id} tid={test_id}"
+        )
+        return jsonify({
+            "error": _friendly_ai_error(error_id),
+            "error_id": error_id,
+        }), 502
 
     append_chat(chat_id, "user", message)
     append_chat(chat_id, "assistant", response)

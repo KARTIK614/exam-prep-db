@@ -12,7 +12,7 @@ Live: `https://exam-prep-db.onrender.com`
 - **Sessions**: `flask-session` (filesystem backend)
 - **Auth**: JWT (HS256) in an HttpOnly cookie, with a users table (bcrypt/scrypt password hashes) and per-user roles (`admin` / `user`)
 - **DB**: SQLite locally; **Turso Cloud** (libSQL) in production via a pure-Python HTTP adapter (`turso_patch.py`) that monkey-patches `sqlite3.connect`
-- **LLM**: Anthropic Claude Sonnet 4.6 for PDF → question extraction (`ai_anthropic.py`), plus optional Gemini CLI for the doubt-chat feature
+- **LLM**: Anthropic Claude Sonnet 4.6 for PDF → question extraction (`ai_anthropic.py`), plus Gemini (2.5-Flash) via the Generative Language REST API for the doubt-chat feature (`ai_utils.py`)
 - **Deploy**: Render (`gunicorn wsgi:app`)
 - **Tests**: pytest, 43 e2e + adapter + admin + extraction tests
 
@@ -40,7 +40,7 @@ exam-prep-platform/
 ├── bp_admin.py            # /admin/* — role='admin' only (flags queue, question CRUD, PDF upload)
 ├── bp_diag.py             # /diag, /setup/seed — JWT-secret-gated bootstrap tools
 ├── ai_config.py           # Static AI/notes maps for Gemini doubt-chat
-├── ai_utils.py            # Gemini CLI wrapper + notes context lookup
+├── ai_utils.py            # Gemini REST API wrapper + notes context lookup
 ├── ai_anthropic.py        # Claude Sonnet 4.6 PDF → question extraction
 │
 ├── templates/             # Jinja2 templates
@@ -66,7 +66,8 @@ exam-prep-platform/
 | `COOKIE_SECURE` | no | `1` in prod (default when `RENDER=true`), `0` local. |
 | `TURSO_DB_URL` | prod: yes | `libsql://<db>.turso.io`. |
 | `TURSO_AUTH_TOKEN` | prod: yes | Turso RW token. |
-| `GEMINI_CLI` | no | Path to Gemini CLI binary (only for AI doubt features). |
+| `GEMINI_API_KEY` | for doubt-chat | Google Generative Language API key. Required for `/api/doubt/deep-dive` + `/api/doubt/chat`. Missing key → server returns an error-ID; no CLI/binary needed. |
+| `GEMINI_MODEL` | no | Override the Gemini model name (default `gemini-2.5-flash`). |
 
 Locally the app boots without any env vars — it prints a warning and generates ephemeral dev secrets each restart. In production (Render sets `RENDER=true`), missing `FLASK_SECRET_KEY` or `JWT_SECRET` is a hard fail.
 

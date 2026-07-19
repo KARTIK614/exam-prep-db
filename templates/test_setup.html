@@ -73,17 +73,34 @@
               </div>
 
               <div class="form-group" id="neg-marking-group" style="display:none">
-                <label class="toggle-wrap">
-                  <span>Enable negative marking</span>
-                  <input type="checkbox" name="neg_marking" id="neg-marking-toggle" style="width:auto">
-                </label>
-                <div class="hint">
-                  Penalty per wrong answer:
-                  <input type="number" name="negative_ratio" id="neg-marking-ratio"
-                         min="0" max="1" step="0.01"
-                         value="{{ '%.3f'|format(default_neg_ratio) }}"
-                         style="width:80px;display:inline-block;padding:4px 6px;margin-left:6px" disabled>
-                  &nbsp;(default {{ '%.3f'|format(default_neg_ratio) }} = ⅓; 0.25 = ¼; 0 = disabled)
+                <label style="font-weight:600;display:block;margin-bottom:6px">Negative marking</label>
+                <div class="neg-preset-group" role="radiogroup" aria-label="Negative marking preset"
+                     style="display:flex;flex-direction:column;gap:6px;font-size:14px">
+                  <label style="display:flex;align-items:center;gap:8px">
+                    <input type="radio" name="neg_marking_preset" value="none" id="neg-preset-none" style="width:auto">
+                    <span>No negative marking (0)</span>
+                  </label>
+                  <label style="display:flex;align-items:center;gap:8px">
+                    <input type="radio" name="neg_marking_preset" value="third" id="neg-preset-third" style="width:auto" checked>
+                    <span>1/3 (BCI, RPSC — 0.3333)</span>
+                  </label>
+                  <label style="display:flex;align-items:center;gap:8px">
+                    <input type="radio" name="neg_marking_preset" value="quarter" id="neg-preset-quarter" style="width:auto">
+                    <span>1/4 (SSC — 0.25)</span>
+                  </label>
+                  <label style="display:flex;align-items:center;gap:8px">
+                    <input type="radio" name="neg_marking_preset" value="fifth" id="neg-preset-fifth" style="width:auto">
+                    <span>1/5 (some IBPS — 0.20)</span>
+                  </label>
+                  <label style="display:flex;align-items:center;gap:8px">
+                    <input type="radio" name="neg_marking_preset" value="custom" id="neg-preset-custom" style="width:auto">
+                    <span>Custom:</span>
+                    <input type="number" name="negative_ratio" id="neg-marking-ratio"
+                           min="0" max="1" step="0.01"
+                           value="{{ '%.3f'|format(default_neg_ratio) }}"
+                           style="width:80px;padding:4px 6px" disabled>
+                    <span class="hint" style="font-size:12px">(freeform decimal, 0–1)</span>
+                  </label>
                 </div>
               </div>
 
@@ -225,33 +242,32 @@
       hi.addEventListener('input', clampMax);
     })();
 
-    // Negative-marking group — only visible when Exam Mode is picked. Ratio
-    // input is disabled unless the checkbox is on so the "0.333 by default"
-    // hint reads as a preview rather than an active value.
+    // Negative-marking group — only visible when Exam Mode is picked. The
+    // preset radio picks a canonical ratio; the "Custom" option enables the
+    // freeform number input so the server sees a real `negative_ratio` value.
+    // Default preset is 1/3 (BCI/RPSC) since this project targets Rajasthan
+    // competitive exams.
     (function () {
       const modePractice = document.getElementById('mode-practice');
       const modeExam = document.getElementById('mode-exam');
       const group = document.getElementById('neg-marking-group');
-      const chk = document.getElementById('neg-marking-toggle');
+      const customRadio = document.getElementById('neg-preset-custom');
       const ratio = document.getElementById('neg-marking-ratio');
-      if (!modePractice || !modeExam || !group || !chk || !ratio) return;
+      if (!modePractice || !modeExam || !group || !customRadio || !ratio) return;
+
+      const presetRadios = document.querySelectorAll('input[name="neg_marking_preset"]');
 
       function syncMode() {
-        const isExam = modeExam.checked;
-        group.style.display = isExam ? 'block' : 'none';
-        if (!isExam) {
-          chk.checked = false;
-          ratio.disabled = true;
-        }
+        group.style.display = modeExam.checked ? 'block' : 'none';
       }
-      function syncChk() {
-        ratio.disabled = !chk.checked;
+      function syncCustom() {
+        ratio.disabled = !customRadio.checked;
       }
       modePractice.addEventListener('change', syncMode);
       modeExam.addEventListener('change', syncMode);
-      chk.addEventListener('change', syncChk);
+      presetRadios.forEach(r => r.addEventListener('change', syncCustom));
       syncMode();
-      syncChk();
+      syncCustom();
     })();
   </script>
 

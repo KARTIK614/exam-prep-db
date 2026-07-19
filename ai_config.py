@@ -1,6 +1,5 @@
 """Static AI/notes configuration — filename maps for Gemini context lookup."""
 import os
-import shutil
 from config import Config
 
 NOTES_DIR = Config.NOTES_DIR
@@ -39,4 +38,7 @@ SUPPLEMENTARY_FILES = [
     'syllabus-analysis.md',
 ]
 
-GEMINI_CLI = Config.GEMINI_CLI or shutil.which('gemini') or os.path.expanduser('~/.nvm/versions/node/v20.20.2/bin/gemini')
+# NOTE: `GEMINI_CLI` used to point at a Node.js CLI binary. As of the REST
+# migration (see ai_utils.call_gemini) we hit Google's HTTPS endpoint directly
+# using `GEMINI_API_KEY`, so no binary is required. Kept only as a comment for
+# grep-ability; delete after a release cycle.
