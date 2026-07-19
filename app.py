@@ -52,7 +52,13 @@ def create_app(config_object=Config):
     app.register_blueprint(errorlog_bp)
     app.register_blueprint(api_bp, url_prefix="/api")
     app.register_blueprint(doubt_bp, url_prefix="/api/doubt")
-    app.register_blueprint(diag_bp)
+    # bp_diag disabled — see docs/plans/CRITIC_REPORT_backend.md F06/F31/F43.
+    # Endpoints (/diag/<token>, /setup/seed/<token>) had URL-token auth that
+    # leaked via logs and enabled admin takeover. Re-enable only if reintroduced
+    # behind hardened server-side auth (not URL params).
+    if os.environ.get("ENABLE_DIAG_ENDPOINTS") == "1":
+        app.register_blueprint(diag_bp)
+        app.logger.warning("DIAG ENDPOINTS ENABLED — auth is URL-token-based; kill after use")
     app.register_blueprint(admin_bp)
     app.register_blueprint(review_bp)
 
