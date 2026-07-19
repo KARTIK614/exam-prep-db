@@ -27,6 +27,7 @@ def tmp_env(monkeypatch, tmp_path):
     for mod in list(sys.modules.keys()):
         if mod in ("app", "config", "auth", "db", "seed", "bp_auth", "bp_main",
                    "bp_tests", "bp_analytics", "bp_errorlog", "bp_api", "bp_doubt",
+                   "bp_review", "sr",
                    "ai_config", "ai_utils"):
             sys.modules.pop(mod, None)
 

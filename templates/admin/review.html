@@ -1,0 +1,147 @@
+{% extends "admin/base.html" %}
+{% set active = 'review' %}
+{% block title %}Content Review{% endblock %}
+{% block content %}
+  <h2>Content Review Queue</h2>
+
+  <div class="admin-card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+      <div>
+        <a href="?filter=medium"     class="btn-sm {{ 'btn-primary' if active_filter=='medium' else 'btn-outline' }}">Medium ({{ counts.medium }})</a>
+        <a href="?filter=with_notes" class="btn-sm {{ 'btn-primary' if active_filter=='with_notes' else 'btn-outline' }}">With Notes ({{ counts.with_notes }})</a>
+        <a href="?filter=synthetic"  class="btn-sm {{ 'btn-primary' if active_filter=='synthetic' else 'btn-outline' }}">Synthetic ({{ counts.synthetic }})</a>
+        <a href="?filter=deferred"   class="btn-sm {{ 'btn-primary' if active_filter=='deferred' else 'btn-outline' }}">Deferred ({{ counts.deferred }})</a>
+        <a href="?filter=non_high"   class="btn-sm {{ 'btn-primary' if active_filter=='non_high' else 'btn-outline' }}">All Non-High ({{ counts.non_high }})</a>
+      </div>
+      <div style="color:#6c7a94;font-size:12px">
+        Keyboard: <kbd>J</kbd>/<kbd>K</kbd> nav · <kbd>Enter</kbd> confirm · <kbd>E</kbd> edit · <kbd>D</kbd> disable · <kbd>S</kbd> defer · <kbd>?</kbd> help
+      </div>
+    </div>
+
+    {% if rows %}
+    <div id="review-cards">
+      {% for q in rows %}
+        <div class="review-card" data-qid="{{ q.id }}" data-idx="{{ loop.index0 }}">
+          <div class="review-head">
+            <div>
+              <strong>Q#{{ q.id }}</strong>
+              <span class="chip">{{ q.topic_name or 'no topic' }}</span>
+              {% if q.section %}<span class="chip subtle">{{ q.section }}</span>{% endif %}
+              {% if q.sub_topic %}<span class="chip subtle">{{ q.sub_topic }}</span>{% endif %}
+              {% if q.pyq_exam %}<span class="chip pyq">PYQ {{ q.pyq_exam }}{% if q.pyq_year %} {{ q.pyq_year }}{% endif %}</span>{% endif %}
+              <span class="chip conf-{{ q.confidence or 'unknown' }}">{{ q.confidence or 'unknown' }}</span>
+              {% if q.source and q.source.startswith('synthetic-') %}<span class="chip synth">{{ q.source }}</span>{% endif %}
+            </div>
+            <div class="review-status"><em id="status-{{ q.id }}"></em></div>
+          </div>
+
+          <div class="review-body">
+            <div class="qtext">{{ q.question_text }}</div>
+            <ol class="opts" type="A">
+              <li{% if q.correct_option == 'A' %} class="correct"{% endif %}>{{ q.option_a }}</li>
+              <li{% if q.correct_option == 'B' %} class="correct"{% endif %}>{{ q.option_b }}</li>
+              <li{% if q.correct_option == 'C' %} class="correct"{% endif %}>{{ q.option_c }}</li>
+              <li{% if q.correct_option == 'D' %} class="correct"{% endif %}>{{ q.option_d }}</li>
+            </ol>
+            {% if q.explanation %}
+              {% set expl = q.explanation %}
+              {% if '[Reviewer note:' in expl %}
+                {% set parts = expl.split('[Reviewer note:', 1) %}
+                <div class="expl">{{ parts[0] }}</div>
+                <div class="review-note">[Reviewer note:{{ parts[1] }}</div>
+              {% else %}
+                <div class="expl">{{ expl }}</div>
+                {% if q.review_notes %}
+                  <div class="review-note">[Reviewer note: {{ q.review_notes }}]</div>
+                {% endif %}
+              {% endif %}
+            {% endif %}
+            <div class="src">Source: <code>{{ q.source or '—' }}</code></div>
+          </div>
+
+          <div class="review-actions">
+            <button class="btn-sm btn-success" onclick="reviewAct({{ q.id }}, 'confirm')">Confirm as High</button>
+            <a class="btn-sm btn-outline" href="/admin/questions/{{ q.id }}/edit">Edit</a>
+            <button class="btn-sm btn-warning" onclick="reviewAct({{ q.id }}, 'defer')">Defer</button>
+            <button class="btn-sm btn-danger"  onclick="reviewAct({{ q.id }}, 'disable')">Disable</button>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+    {% else %}
+      <p style="color:#6c7a94">Queue empty for this filter. Take a break.</p>
+    {% endif %}
+  </div>
+
+  <style>
+    .review-card { background:#fff; border:1px solid #e5eaf3; border-radius:10px; padding:16px; margin-bottom:14px; scroll-margin-top:20px; }
+    .review-card.focused { border-color:#7b2d8b; box-shadow:0 0 0 3px rgba(123,45,139,0.14); }
+    .review-card.dimmed { opacity:0.35; }
+    .review-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:10px; }
+    .review-head .chip { display:inline-block; padding:2px 8px; border-radius:10px; background:#eef1f7; color:#404b60; font-size:11px; font-weight:600; margin-right:6px; }
+    .review-head .chip.pyq { background:#e0edff; color:#054695; }
+    .review-head .chip.synth { background:#fff3d6; color:#7a5a00; }
+    .review-head .chip.subtle { background:#f6f8fb; color:#6c7a94; font-weight:500; }
+    .review-head .chip.conf-medium { background:#ffe4b5; color:#7a5a00; }
+    .review-head .chip.conf-high { background:#d6f5db; color:#1e5a2f; }
+    .review-head .chip.conf-low, .review-head .chip.conf-deferred { background:#ffd6d6; color:#900; }
+    .review-status em { font-size:12px; color:#2e7d32; font-style:normal; font-weight:600; }
+    .qtext { font-size:14px; line-height:1.5; color:#0e1729; margin-bottom:10px; white-space:pre-wrap; }
+    ol.opts { margin:8px 0; padding-left:28px; }
+    ol.opts li { padding:2px 4px; font-size:13px; color:#404b60; }
+    ol.opts li.correct { background:#eaf9ee; color:#1e5a2f; font-weight:600; border-radius:4px; }
+    .expl { font-size:12px; color:#6c7a94; margin-top:8px; padding:8px 10px; background:#f8f9fc; border-radius:6px; white-space:pre-wrap; }
+    .review-note { background:#fff8d6; border:1px solid #f0d97b; padding:8px 10px; border-radius:6px; font-size:12px; color:#7a5a00; margin-top:8px; white-space:pre-wrap; }
+    .src { font-size:11px; color:#8ea3c6; margin-top:8px; }
+    .review-actions { display:flex; gap:8px; margin-top:12px; }
+    kbd { background:#f0f0f5; border:1px solid #d0d7e5; border-radius:3px; padding:1px 5px; font-size:11px; font-family:monospace; }
+  </style>
+
+  <script>
+    const cards = Array.from(document.querySelectorAll('.review-card'));
+    let cursor = 0;
+
+    function focusCard(i) {
+      if (i < 0) i = 0;
+      if (i >= cards.length) i = cards.length - 1;
+      cards.forEach((c, j) => c.classList.toggle('focused', j === i));
+      cursor = i;
+      if (cards[i]) cards[i].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    if (cards.length) focusCard(0);
+
+    async function reviewAct(qid, action) {
+      const card = document.querySelector(`.review-card[data-qid="${qid}"]`);
+      try {
+        const res = await fetch(`/admin/api/review/${qid}/${action}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const j = await res.json();
+        const status = document.getElementById(`status-${qid}`);
+        if (status) status.textContent = ({ confirm: 'confirmed', disable: 'disabled', defer: 'deferred' })[action] || 'done';
+        if (card) card.classList.add('dimmed');
+        // Auto-advance
+        const idx = parseInt(card?.dataset.idx || cursor, 10);
+        setTimeout(() => focusCard(idx + 1), 250);
+      } catch (e) {
+        alert('Action failed: ' + e.message);
+      }
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      const card = cards[cursor];
+      if (!card) return;
+      const qid = card.dataset.qid;
+      if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); focusCard(cursor + 1); }
+      else if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); focusCard(cursor - 1); }
+      else if (e.key === 'Enter') { e.preventDefault(); reviewAct(qid, 'confirm'); }
+      else if (e.key === 'e' || e.key === 'E') { window.location.href = `/admin/questions/${qid}/edit`; }
+      else if (e.key === 'd' || e.key === 'D') { e.preventDefault(); if (confirm('Disable Q#' + qid + '?')) reviewAct(qid, 'disable'); }
+      else if (e.key === 's' || e.key === 'S') { e.preventDefault(); reviewAct(qid, 'defer'); }
+      else if (e.key === '?') { alert('J/K: navigate\\nEnter: confirm as High\\nE: edit\\nD: disable\\nS: defer (skip)'); }
+    });
+  </script>
+{% endblock %}

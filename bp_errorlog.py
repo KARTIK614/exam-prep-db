@@ -2,6 +2,7 @@
 from flask import Blueprint, request, render_template
 
 from db import get_db
+from sr import get_queue_summary, MAX_BOX
 
 bp = Blueprint("errorlog", __name__)
 
@@ -49,8 +50,11 @@ def view():
 
     topics = db.execute("SELECT * FROM topics ORDER BY name").fetchall()
 
+    sr_summary = get_queue_summary(db)
+
     return render_template(
         "errorlog.html", errors=errors, topics=topics,
         total=total, page=page, per_page=per_page,
         topic_filter=topic_filter, type_filter=type_filter, resolved_filter=resolved_filter,
+        sr_summary=sr_summary, max_box=MAX_BOX,
     )

@@ -51,6 +51,9 @@
     <h1>Exam Platform<small>Admin Panel</small></h1>
     <a href="/admin" class="{{ 'active' if active == 'dashboard' }}">Dashboard</a>
     <a href="/admin/flags" class="{{ 'active' if active == 'flags' }}">Flags Queue{% if stats and stats.flags_open %}<span class="badge-count">{{ stats.flags_open }}</span>{% endif %}</a>
+    <a href="/admin/review" class="{{ 'active' if active == 'review' }}">Content Review{% if stats and stats.review_medium %}<span class="badge-count">{{ stats.review_medium }}</span>{% endif %}</a>
+    <a href="/admin/duplicates" class="{{ 'active' if active == 'duplicates' }}">Duplicates</a>
+    <a href="/admin/synthesize" class="{{ 'active' if active == 'synthesize' }}">Synthesize{% if stats and stats.deficit_topics %}<span class="badge-count">{{ stats.deficit_topics }}</span>{% endif %}</a>
     <a href="/admin/questions" class="{{ 'active' if active == 'questions' }}">Questions</a>
     <a href="/admin/topics" class="{{ 'active' if active == 'topics' }}">Topics</a>
     <a href="/admin/uploads" class="{{ 'active' if active == 'uploads' }}">PDF Uploads</a>

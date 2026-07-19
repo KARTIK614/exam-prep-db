@@ -11,7 +11,7 @@ def logged_in(client):
 def test_flag_question_creates_row(logged_in, app):
     resp = logged_in.post(
         "/api/flag_question",
-        json={"question_id": 1, "test_id": None, "category": "bad_latex", "note": "sqrt broken"},
+        json={"question_id": 1, "test_id": None, "category": "wrong_answer", "note": "answer key mismatch"},
     )
     assert resp.status_code == 200
     assert resp.get_json() == {"status": "ok"}
@@ -22,7 +22,7 @@ def test_flag_question_creates_row(logged_in, app):
         "SELECT question_id, category, note, status FROM question_flags ORDER BY id DESC LIMIT 1"
     ).fetchone()
     db.close()
-    assert row == (1, "bad_latex", "sqrt broken", "open")
+    assert row == (1, "wrong_answer", "answer key mismatch", "open")
 
 
 def test_flag_requires_question_id(logged_in):
@@ -31,16 +31,14 @@ def test_flag_requires_question_id(logged_in):
     assert "question_id" in resp.get_json()["error"]
 
 
-def test_flag_bad_category_falls_back_to_other(logged_in, app):
-    logged_in.post(
+def test_flag_bad_category_rejected(logged_in, app):
+    """Post-Phase-3: unknown categories are rejected with 400, not silently mapped to 'other'."""
+    resp = logged_in.post(
         "/api/flag_question",
         json={"question_id": 1, "category": "not_a_real_category"},
     )
-    import sqlite3
-    db = sqlite3.connect(app.config["DB_PATH"])
-    row = db.execute("SELECT category FROM question_flags ORDER BY id DESC LIMIT 1").fetchone()
-    db.close()
-    assert row[0] == "other"
+    assert resp.status_code == 400
+    assert "category" in resp.get_json()["error"].lower()
 
 
 def test_flag_endpoint_requires_auth(client):

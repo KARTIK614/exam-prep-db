@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Search &mdash; Exam Prep Platform</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script>
+    // Inline theme setter — runs before CSS applies to prevent flash.
+    (function () {
+      try {
+        var saved = localStorage.getItem('theme');
+        var theme = saved || (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.dataset.theme = theme;
+      } catch (_e) {
+        document.documentElement.dataset.theme = 'light';
+      }
+    })();
+  </script>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <h1>Exam Platform</h1>
+      <span>Exam Prep Platform</span>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="/"><span class="icon">&#9632;</span> Dashboard</a>
+      <a href="/test/setup"><span class="icon">&#9654;</span> Take Test</a>
+      <a href="/analytics"><span class="icon">&#9733;</span> Analytics</a>
+      <a href="/errorlog"><span class="icon">&#9888;</span> Error Log</a>
+      <a href="/review"><span class="icon">&#8635;</span> Review</a>
+      <a href="/bookmarks"><span class="icon">&#9733;</span> Bookmarks</a>
+      <a href="/search" class="active"><span class="icon">&#128269;</span> Search</a>
+      <a href="/logout" class="nav-logout" style="margin-top:auto"><span class="icon">&#8592;</span> Logout</a>
+    </nav>
+    <button type="button" class="theme-toggle-btn" onclick="toggleTheme()" title="Toggle theme" aria-pressed="false">
+      <span class="theme-icon" aria-hidden="true">&#9788;</span>
+      <span class="theme-label">Theme</span>
+    </button>
+  </aside>
+
+  <!-- Mobile top bar -->
+  <header class="mobile-topbar" role="banner">
+    <a href="/" class="mobile-brand">Exam Platform</a>
+    <div class="mobile-topbar-actions">
+      <button type="button" class="icon-btn" onclick="openSearch()" title="Search">&#128269;</button>
+      <button type="button" class="icon-btn" onclick="toggleTheme()" title="Toggle theme">&#9788;</button>
+      <a class="icon-btn" href="/logout" title="Logout">&#8592;</a>
+    </div>
+  </header>
+
+  <div class="main">
+    <div class="page-header">
+      <h2>Search question bank</h2>
+      <p>Full-text search across every question. Tip: press <kbd>Ctrl</kbd>+<kbd>K</kbd> from any page.</p>
+    </div>
+
+    <div class="content">
+      <div class="card mb-4">
+        <div class="card-body">
+          <div class="search-filters">
+            <div>
+              <label for="s-q">Query</label>
+              <input type="text" id="s-q" value="{{ initial_query or '' }}" placeholder="e.g. binary tree, network layer, TCP" autofocus>
+            </div>
+            <div>
+              <label for="s-topic">Topic</label>
+              <select id="s-topic">
+                <option value="">Any</option>
+                {% for t in topics %}
+                  <option value="{{ t.id }}">{{ t.name }}{% if t.paper %} (Paper {{ t.paper }}){% endif %}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div>
+              <label for="s-diff">Difficulty</label>
+              <select id="s-diff">
+                <option value="">Any</option>
+                <option value="easy">Easy</option>
+                <option value="medium">Medium</option>
+                <option value="hard">Hard</option>
+              </select>
+            </div>
+            <div>
+              <label for="s-conf">Confidence</label>
+              <select id="s-conf">
+                <option value="">Any</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
+            </div>
+            <div>
+              <label for="s-exam">PYQ Exam</label>
+              <input type="text" id="s-exam" placeholder="e.g. RPSC">
+            </div>
+            <div>
+              <label for="s-year">PYQ Year</label>
+              <input type="number" id="s-year" placeholder="e.g. 2019">
+            </div>
+          </div>
+          <div id="search-status" class="text-muted" style="margin-top:8px">Type at least 2 characters to search.</div>
+        </div>
+      </div>
+
+      <div id="search-results-list"></div>
+    </div>
+  </div>
+
+  <!-- Mobile bottom nav -->
+  <nav class="mobile-bottomnav" role="navigation">
+    <a href="/"><span class="icon">&#9632;</span> Dash</a>
+    <a href="/test/setup"><span class="icon">&#9654;</span> Test</a>
+    <a href="/analytics"><span class="icon">&#9733;</span> Stats</a>
+    <a href="/errorlog"><span class="icon">&#9888;</span> Errs</a>
+    <a href="/search" class="active"><span class="icon">&#128269;</span> Find</a>
+  </nav>
+
+  <script src="/static/script.js"></script>
+  <script>
+    (function () {
+      const qEl = document.getElementById('s-q');
+      const topicEl = document.getElementById('s-topic');
+      const diffEl = document.getElementById('s-diff');
+      const confEl = document.getElementById('s-conf');
+      const examEl = document.getElementById('s-exam');
+      const yearEl = document.getElementById('s-year');
+      const statusEl = document.getElementById('search-status');
+      const listEl = document.getElementById('search-results-list');
+      let timer = null;
+
+      function esc(s) {
+        return String(s == null ? '' : s)
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      }
+
+      function render(query, data) {
+        if (!data || data.error) {
+          statusEl.textContent = 'Error: ' + (data && data.error || 'unknown');
+          listEl.innerHTML = '';
+          return;
+        }
+        if (!data.results || !data.results.length) {
+          statusEl.textContent = 'No matches for "' + query + '".';
+          listEl.innerHTML = '';
+          return;
+        }
+        statusEl.textContent = data.total + ' match' + (data.total === 1 ? '' : 'es')
+          + ' · showing top ' + data.results.length
+          + (data.backend ? ' · ' + data.backend : '');
+
+        const parts = [];
+        data.results.forEach(r => {
+          const opts = ['A', 'B', 'C', 'D'].map(L => {
+            const txt = r['option_' + L.toLowerCase()] || '';
+            const isCorrect = r.correct_option === L;
+            const cls = isCorrect ? 'style="color:var(--success);font-weight:600"' : '';
+            return '<div ' + cls + '><strong>' + L + '.</strong> ' + esc(txt) + '</div>';
+          }).join('');
+          parts.push(
+            '<div class="card mb-4">' +
+              '<div class="card-body">' +
+                '<div class="search-result-meta">' +
+                  '<span class="badge badge-muted">#' + r.id + '</span>' +
+                  '<span>' + esc(r.topic_name || '') + '</span>' +
+                  '<span>· ' + esc(r.difficulty || '') + '</span>' +
+                '</div>' +
+                '<div style="font-size:15px;line-height:1.5;margin-bottom:10px">' + (r.snippet || esc(r.question_text || '')) + '</div>' +
+                '<div style="font-size:13px;color:var(--text-muted)">' + opts + '</div>' +
+              '</div>' +
+            '</div>'
+          );
+        });
+        listEl.innerHTML = parts.join('');
+      }
+
+      async function doSearch() {
+        const q = qEl.value.trim();
+        if (q.length < 2) {
+          statusEl.textContent = 'Type at least 2 characters to search.';
+          listEl.innerHTML = '';
+          return;
+        }
+        const params = new URLSearchParams({ q: q, limit: '40' });
+        if (topicEl.value) params.set('topic_id', topicEl.value);
+        if (diffEl.value) params.set('difficulty', diffEl.value);
+        if (confEl.value) params.set('confidence', confEl.value);
+        if (examEl.value.trim()) params.set('pyq_exam', examEl.value.trim());
+        if (yearEl.value) params.set('pyq_year', yearEl.value);
+
+        statusEl.textContent = 'Searching…';
+        try {
+          const resp = await fetch('/api/search?' + params.toString());
+          const data = await resp.json();
+          render(q, data);
+        } catch (e) {
+          render(q, { error: String(e) });
+        }
+      }
+
+      function debounced() {
+        clearTimeout(timer);
+        timer = setTimeout(doSearch, 250);
+      }
+
+      [qEl, topicEl, diffEl, confEl, examEl, yearEl].forEach(el => {
+        el.addEventListener('input', debounced);
+        el.addEventListener('change', debounced);
+      });
+
+      // Kick off initial search if query prefilled.
+      if (qEl.value.trim().length >= 2) doSearch();
+    })();
+  </script>
+</body>
+</html>

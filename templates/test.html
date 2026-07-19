@@ -5,6 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Test #{{ test_id }} — Exam Prep Platform</title>
   <link rel="stylesheet" href="/static/style.css">
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('theme');
+        var theme = saved || (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.dataset.theme = theme;
+      } catch (_e) { document.documentElement.dataset.theme = 'light'; }
+    })();
+  </script>
 </head>
 <body>
   <aside class="sidebar">
@@ -17,9 +26,25 @@
       <a href="/test/setup"><span class="icon">&#9654;</span> Take Test</a>
       <a href="/analytics"><span class="icon">&#9733;</span> Analytics</a>
       <a href="/errorlog"><span class="icon">&#9888;</span> Error Log</a>
-      <a href="/logout" class="nav-logout" style="margin-top:auto;color:#c04040"><span class="icon">&#8592;</span> Logout</a>
+      <a href="/review"><span class="icon">&#8635;</span> Review</a>
+      <a href="/bookmarks"><span class="icon">&#9733;</span> Bookmarks</a>
+      <a href="/search"><span class="icon">&#128269;</span> Search</a>
+      <a href="/logout" class="nav-logout" style="margin-top:auto"><span class="icon">&#8592;</span> Logout</a>
     </nav>
+    <button type="button" class="theme-toggle-btn" onclick="toggleTheme()" title="Toggle theme" aria-pressed="false">
+      <span class="theme-icon" aria-hidden="true">&#9788;</span>
+      <span class="theme-label">Theme</span>
+    </button>
   </aside>
+
+  <header class="mobile-topbar" role="banner">
+    <a href="/" class="mobile-brand">Exam Platform</a>
+    <div class="mobile-topbar-actions">
+      <button type="button" class="icon-btn" onclick="openSearch()" title="Search">&#128269;</button>
+      <button type="button" class="icon-btn" onclick="toggleTheme()" title="Toggle theme">&#9788;</button>
+      <a class="icon-btn" href="/logout" title="Logout">&#8592;</a>
+    </div>
+  </header>
 
   <div class="main">
     <div class="page-header">
@@ -43,7 +68,12 @@
       <div class="test-layout">
         <!-- Question Panel -->
         <div class="question-panel">
-          <div class="card" style="min-height:500px">
+          <div class="card" style="min-height:500px;position:relative">
+            <button class="bookmark-star" id="bookmark-btn" type="button"
+                    onclick="toggleBookmark()" title="Bookmark this question"
+                    aria-pressed="false">
+              <span id="bookmark-icon">&#9734;</span>
+            </button>
             <div class="card-body" id="question-container">
               <div class="question-number" id="q-meta"></div>
               <div class="question-text" id="q-text">Loading...</div>
@@ -51,7 +81,8 @@
               <div id="feedback-area"></div>
               <div style="display:flex;gap:10px;margin-top:16px" id="action-buttons"></div>
               <div style="margin-top:20px;text-align:right">
-                <a href="#" onclick="openFlagModal();return false" style="font-size:12px;color:#888;text-decoration:none">
+                <a href="#" class="report-issue-link" onclick="openFlagModal();return false"
+                   style="font-size:12px;color:var(--text-muted);text-decoration:none">
                   &#9873; Report issue with this question
                 </a>
               </div>
@@ -81,11 +112,26 @@
 
           <!-- Question Navigator -->
           <div class="card">
-            <div class="card-header">Question Navigator</div>
+            <div class="card-header">
+              Question Navigator
+              <button class="btn btn-sm btn-outline" onclick="document.getElementById('help-modal').style.display='flex'" title="Keyboard shortcuts (?)">
+                &#8265; Keys
+              </button>
+            </div>
             <div class="card-body">
+              <div class="palette-legend" aria-label="Palette legend">
+                <span><span class="legend-dot state-answered"></span>Answered</span>
+                <span><span class="legend-dot state-not-answered"></span>Not answered</span>
+                <span><span class="legend-dot state-review"></span>Review</span>
+                <span><span class="legend-dot state-answered-review"></span>Ans + review</span>
+                <span><span class="legend-dot state-not-visited"></span>Not visited</span>
+              </div>
               <div class="question-nav-grid" id="q-nav-grid">
                 {% for i in range(total) %}
-                <button class="q-nav-btn {{ 'current' if i == current }}" onclick="goToQuestion({{ i }})" id="nav-{{ i }}">
+                <button class="q-nav-btn state-not-visited {{ 'current' if i == current }}"
+                        onclick="goToQuestion({{ i }})" id="nav-{{ i }}"
+                        data-state="not_visited"
+                        title="Q{{ i + 1 }} — not visited">
                   {{ i + 1 }}
                 </button>
                 {% endfor %}
@@ -102,19 +148,70 @@
     <div class="modal">
       <h3>Report an issue with this question</h3>
       <p style="font-size:13px;color:var(--text-muted)">Your report is logged for review. This won't affect your score.</p>
-      <label style="display:block;margin-top:12px;font-size:12px;font-weight:600">Category</label>
-      <select id="flag-category" style="width:100%;padding:8px;border-radius:6px;border:1px solid #ddd;margin-top:4px">
-        <option value="data_inconsistency">Data inconsistency (numbers/facts wrong)</option>
-        <option value="bad_latex">Broken math / LaTeX rendering</option>
-        <option value="typo">Typo or unclear wording</option>
-        <option value="wrong_answer">Correct answer is wrong</option>
-        <option value="other">Other</option>
-      </select>
-      <label style="display:block;margin-top:12px;font-size:12px;font-weight:600">Notes (optional)</label>
+
+      <div class="flag-radio-list" role="radiogroup" aria-label="Issue category">
+        <label class="flag-radio-item">
+          <input type="radio" name="flag-category" value="wrong_answer">
+          <span><strong>Answer key is wrong</strong><small>The marked "correct" option is not correct.</small></span>
+        </label>
+        <label class="flag-radio-item">
+          <input type="radio" name="flag-category" value="ambiguous">
+          <span><strong>Ambiguous</strong><small>Multiple options are correct, or none of them are.</small></span>
+        </label>
+        <label class="flag-radio-item">
+          <input type="radio" name="flag-category" value="typo_question">
+          <span><strong>Typo in question stem</strong><small>Wording of the question itself is broken.</small></span>
+        </label>
+        <label class="flag-radio-item">
+          <input type="radio" name="flag-category" value="typo_options">
+          <span><strong>Typo in options</strong><small>One or more of the A/B/C/D texts is broken.</small></span>
+        </label>
+        <label class="flag-radio-item">
+          <input type="radio" name="flag-category" value="explanation_missing">
+          <span><strong>Explanation missing or wrong</strong><small>The explanation is empty, incomplete, or incorrect.</small></span>
+        </label>
+        <label class="flag-radio-item">
+          <input type="radio" name="flag-category" value="duplicate">
+          <span><strong>Duplicate</strong><small>I've seen this exact question already.</small></span>
+        </label>
+        <label class="flag-radio-item">
+          <input type="radio" name="flag-category" value="other">
+          <span><strong>Other</strong><small>Something else &mdash; please describe below.</small></span>
+        </label>
+      </div>
+
+      <label style="display:block;margin-top:12px;font-size:12px;font-weight:600">
+        Notes <span id="flag-note-required" style="color:var(--danger);display:none">(required for "Other")</span>
+      </label>
       <textarea id="flag-note" rows="3" style="width:100%;padding:8px;border-radius:6px;border:1px solid #ddd;margin-top:4px" placeholder="What's wrong with the question?"></textarea>
+
+      <div id="flag-error" style="color:var(--danger);font-size:12px;margin-top:8px;display:none"></div>
+
       <div class="actions" style="margin-top:16px">
         <button class="btn btn-outline" onclick="document.getElementById('flag-modal').style.display='none'">Cancel</button>
-        <button class="btn btn-primary" onclick="submitFlag()">Submit report</button>
+        <button class="btn btn-primary" id="flag-submit" onclick="submitFlag()" disabled>Submit report</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Keyboard Shortcuts Help Modal -->
+  <div class="modal-overlay" id="help-modal" style="display:none">
+    <div class="modal">
+      <h3>Keyboard shortcuts</h3>
+      <table style="width:100%;font-size:13px">
+        <tbody>
+          <tr><td><kbd>A</kbd> / <kbd>B</kbd> / <kbd>C</kbd> / <kbd>D</kbd></td><td>Pick that option</td></tr>
+          <tr><td><kbd>Enter</kbd></td><td>Save &amp; go to next question</td></tr>
+          <tr><td><kbd>&larr;</kbd> / <kbd>&rarr;</kbd></td><td>Previous / next question</td></tr>
+          <tr><td><kbd>M</kbd></td><td>Toggle mark-for-review</td></tr>
+          <tr><td><kbd>F</kbd></td><td>Report an issue with this question</td></tr>
+          <tr><td><kbd>Ctrl</kbd> + <kbd>Enter</kbd></td><td>Finish test (with confirmation)</td></tr>
+          <tr><td><kbd>?</kbd></td><td>Show this cheatsheet</td></tr>
+          <tr><td><kbd>Esc</kbd></td><td>Close any open modal</td></tr>
+        </tbody>
+      </table>
+      <div class="actions">
+        <button class="btn btn-primary" onclick="document.getElementById('help-modal').style.display='none'">Got it</button>
       </div>
     </div>
   </div>
@@ -143,9 +240,71 @@
     const TEST_ID = {{ test_id }};
     let currentIdx = {{ current }};
     let answered = {};
+    let reviewMarks = {};       // { "12": true } — mirrors server session["review_marks"]
     let correctCount = 0;
     let timerInterval = null;
     let timerSeconds = 0;
+
+    // Server-provided test mode ('practice' | 'exam') — filled by loadQuestion.
+    let session_mode = 'practice';
+
+    // Palette state machine — mirrors TCS-iON colour code.
+    //   not_visited      — grey (never opened)
+    //   not_answered     — red  (opened but no option picked)
+    //   answered         — green
+    //   review           — purple (marked, no answer)
+    //   answered_review  — purple with green corner dot
+    //   plus .current    — blue border overlay for the active question
+    const STATE_CLASSES = [
+      'state-not-visited', 'state-not-answered', 'state-answered',
+      'state-review', 'state-answered-review',
+      // legacy practice-mode dots (kept so old code paths still render)
+      'answered', 'correct-dot', 'wrong-dot'
+    ];
+
+    function paletteStateFor(idx) {
+      const key = String(idx);
+      const hasAnswer = answered[idx] !== undefined;
+      const isReview = !!reviewMarks[key];
+      if (hasAnswer && isReview) return 'answered_review';
+      if (hasAnswer) return 'answered';
+      if (isReview) return 'review';
+      // Fall through — either not visited or visited-but-unanswered.
+      const btn = document.getElementById('nav-' + idx);
+      if (btn && btn.dataset.visited === '1') return 'not_answered';
+      return 'not_visited';
+    }
+
+    function refreshPaletteCell(idx) {
+      const btn = document.getElementById('nav-' + idx);
+      if (!btn) return;
+      const state = paletteStateFor(idx);
+      btn.dataset.state = state;
+      STATE_CLASSES.forEach(c => btn.classList.remove(c));
+      btn.classList.add('state-' + state.replace(/_/g, '-'));
+
+      // Practice-mode correctness dot: colour override once we know the answer.
+      const ans = answered[idx];
+      if (ans && (session_mode === 'practice')) {
+        if (ans.isCorrect) {
+          btn.classList.remove('state-answered');
+          btn.classList.add('correct-dot');
+        } else {
+          btn.classList.remove('state-answered');
+          btn.classList.add('wrong-dot');
+        }
+      }
+
+      // Tooltip.
+      const label = {
+        not_visited: 'not visited',
+        not_answered: 'not answered',
+        answered: 'answered',
+        review: 'marked for review',
+        answered_review: 'answered + marked for review',
+      }[state] || state;
+      btn.title = 'Q' + (idx + 1) + ' — ' + label;
+    }
 
     // Load current question
     async function loadQuestion(idx) {
@@ -159,6 +318,10 @@
 
       currentIdx = idx;
       window.currentQuestionId = q.id;
+      session_mode = q.test_mode || session_mode;
+      // Keep local review-marks mirror in sync with what the server thinks.
+      if (q.marked_for_review) reviewMarks[String(idx)] = true;
+      updateBookmarkUI(q.bookmarked === true);
       document.getElementById('q-num').textContent = q.index + 1;
       const qMeta = document.getElementById('q-meta');
       qMeta.textContent = '';
@@ -173,10 +336,16 @@
       document.getElementById('q-text').textContent = q.text;
       document.getElementById('progress-bar').style.width = ((q.index + 1) / q.total * 100) + '%';
 
-      // Update nav
+      // Update nav — clear the previous "current" marker, apply to new one,
+      // and mark this cell as visited so palette state can flip from
+      // not_visited → not_answered.
       document.querySelectorAll('.q-nav-btn').forEach(b => b.classList.remove('current'));
       const navBtn = document.getElementById(`nav-${q.index}`);
-      if (navBtn) navBtn.classList.add('current');
+      if (navBtn) {
+        navBtn.classList.add('current');
+        navBtn.dataset.visited = '1';
+      }
+      refreshPaletteCell(q.index);
 
       // Render options (build with DOM APIs to avoid XSS via option text)
       const labels = ['A', 'B', 'C', 'D'];
@@ -259,12 +428,28 @@
       document.getElementById('answered-count').textContent = result.answered;
       document.getElementById('correct-count').textContent = correctCount;
 
-      // Update nav dot
-      const navBtn = document.getElementById(`nav-${currentIdx}`);
-      if (navBtn) {
-        navBtn.classList.add('answered');
-        navBtn.classList.add(result.is_correct ? 'correct-dot' : 'wrong-dot');
-      }
+      // Recompute palette state for this cell (answered / answered_review /
+      // + practice-mode correctness dot).
+      refreshPaletteCell(currentIdx);
+    }
+
+    // POST /api/mark_for_review — toggles session["review_marks"][idx].
+    async function toggleMarkForReview() {
+      const key = String(currentIdx);
+      try {
+        const resp = await fetch('/api/mark_for_review', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question_index: currentIdx }),
+        });
+        if (!resp.ok) return;
+        const j = await resp.json();
+        reviewMarks[key] = !!j.marked;
+        refreshPaletteCell(currentIdx);
+        if (typeof showAchievement === 'function') {
+          showAchievement(j.marked ? 'Marked for review' : 'Un-marked');
+        }
+      } catch (_e) { /* silent */ }
     }
 
     function showAnsweredState(idx, ans, explanation) {
@@ -333,46 +518,175 @@
       document.getElementById('finish-modal').style.display = 'flex';
     }
 
-    // Keyboard shortcuts
+    // Keyboard shortcuts. Ignored when typing in a text input / textarea
+    // (so the flag-modal note doesn't hijack A/B/C/D). Also ignored when a
+    // modal is open, except for Esc (handled globally in script.js).
+    function _shortcutsBlocked(e) {
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return true;
+      // If any modal is open, only allow ? (open help) — everything else is
+      // routed to the modal's own handler.
+      const anyModalOpen = Array.from(document.querySelectorAll('.modal-overlay'))
+        .some(m => m.style.display && m.style.display !== 'none');
+      if (anyModalOpen && e.key !== '?') return true;
+      return false;
+    }
+
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'ArrowRight' && answered[currentIdx] !== undefined && currentIdx < TOTAL - 1) {
+      if (_shortcutsBlocked(e)) return;
+
+      // ─── Ctrl+Enter — finish test (with confirmation) ───────────
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        finishTest();
+        return;
+      }
+
+      // ─── ? — open shortcut cheatsheet ───────────────────────────
+      if (e.key === '?') {
+        e.preventDefault();
+        document.getElementById('help-modal').style.display = 'flex';
+        return;
+      }
+
+      // ─── Enter — save+next (or finish on last question) ─────────
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (currentIdx >= TOTAL - 1) {
+          finishTest();
+        } else {
+          goToQuestion(currentIdx + 1);
+        }
+        return;
+      }
+
+      // ─── Arrow / N / P — navigate palette ───────────────────────
+      if (e.key === 'ArrowRight' && currentIdx < TOTAL - 1) {
+        e.preventDefault();
         goToQuestion(currentIdx + 1);
-      } else if (e.key === 'ArrowLeft' && currentIdx > 0) {
+        return;
+      }
+      if (e.key === 'ArrowLeft' && currentIdx > 0) {
+        e.preventDefault();
         goToQuestion(currentIdx - 1);
-      } else if (['a', 'b', 'c', 'd'].includes(e.key.toLowerCase()) && answered[currentIdx] === undefined) {
+        return;
+      }
+
+      // ─── M — toggle mark-for-review ─────────────────────────────
+      if (e.key === 'm' || e.key === 'M') {
+        e.preventDefault();
+        toggleMarkForReview();
+        return;
+      }
+
+      // ─── F — open flag/report modal ─────────────────────────────
+      if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault();
+        openFlagModal();
+        return;
+      }
+
+      // ─── A/B/C/D — pick that option (only if not already answered) ─
+      const k = e.key.toLowerCase();
+      if (['a', 'b', 'c', 'd'].includes(k) && answered[currentIdx] === undefined) {
+        e.preventDefault();
         const labels = ['A', 'B', 'C', 'D'];
-        submitAnswer(labels[e.key.toLowerCase().charCodeAt(0) - 97]);
+        submitAnswer(labels[k.charCodeAt(0) - 97]);
+        return;
       }
     });
 
-    // Report-issue flag flow
+    // Bookmark star flow
+    function updateBookmarkUI(isBookmarked) {
+      const btn = document.getElementById('bookmark-btn');
+      const icon = document.getElementById('bookmark-icon');
+      if (!btn || !icon) return;
+      if (isBookmarked) {
+        btn.classList.add('active');
+        btn.setAttribute('aria-pressed', 'true');
+        icon.innerHTML = '&#9733;'; // filled star
+      } else {
+        btn.classList.remove('active');
+        btn.setAttribute('aria-pressed', 'false');
+        icon.innerHTML = '&#9734;'; // outline star
+      }
+    }
+    async function toggleBookmark() {
+      const qid = window.currentQuestionId;
+      if (!qid) return;
+      const resp = await fetch('/api/bookmark/' + qid, { method: 'POST' });
+      if (!resp.ok) return;
+      const j = await resp.json();
+      updateBookmarkUI(j.bookmarked === true);
+    }
+
+    // Report-issue flag flow — radio list; Submit disabled until a category is
+    // picked. "Other" additionally requires a note.
+    function _getSelectedCategory() {
+      const el = document.querySelector('input[name="flag-category"]:checked');
+      return el ? el.value : null;
+    }
+    function _refreshFlagSubmit() {
+      const cat = _getSelectedCategory();
+      const note = document.getElementById('flag-note').value.trim();
+      const noteRequired = cat === 'other';
+      document.getElementById('flag-note-required').style.display = noteRequired ? 'inline' : 'none';
+      const ok = !!cat && (!noteRequired || note.length > 0);
+      document.getElementById('flag-submit').disabled = !ok;
+    }
     function openFlagModal() {
       document.getElementById('flag-note').value = '';
-      document.getElementById('flag-category').value = 'data_inconsistency';
+      document.querySelectorAll('input[name="flag-category"]').forEach(r => r.checked = false);
+      document.getElementById('flag-error').style.display = 'none';
+      _refreshFlagSubmit();
       document.getElementById('flag-modal').style.display = 'flex';
     }
+    document.addEventListener('change', (e) => {
+      if (e.target && e.target.name === 'flag-category') _refreshFlagSubmit();
+    });
+    document.addEventListener('input', (e) => {
+      if (e.target && e.target.id === 'flag-note') _refreshFlagSubmit();
+    });
 
     async function submitFlag() {
       const qid = window.currentQuestionId;
       if (!qid) return;
+      const cat = _getSelectedCategory();
+      const note = document.getElementById('flag-note').value.trim();
+      if (!cat) return;
+      if (cat === 'other' && !note) return;
       const resp = await fetch('/api/flag_question', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           question_id: qid,
           test_id: TEST_ID,
-          category: document.getElementById('flag-category').value,
-          note: document.getElementById('flag-note').value,
+          category: cat,
+          note: note,
         }),
       });
-      document.getElementById('flag-modal').style.display = 'none';
       if (resp.ok) {
+        document.getElementById('flag-modal').style.display = 'none';
         if (typeof showAchievement === 'function') showAchievement('Reported. Thanks!');
+      } else {
+        let msg = 'Could not submit. Please try again.';
+        try { const j = await resp.json(); if (j && j.error) msg = j.error; } catch (_e) {}
+        const err = document.getElementById('flag-error');
+        err.textContent = msg;
+        err.style.display = 'block';
       }
     }
 
     // Load first question
     loadQuestion(currentIdx);
   </script>
+
+  <nav class="mobile-bottomnav" role="navigation">
+    <a href="/"><span class="icon">&#9632;</span> Dash</a>
+    <a href="/test/setup" class="active"><span class="icon">&#9654;</span> Test</a>
+    <a href="/analytics"><span class="icon">&#9733;</span> Stats</a>
+    <a href="/errorlog"><span class="icon">&#9888;</span> Errs</a>
+    <a href="/search"><span class="icon">&#128269;</span> Find</a>
+  </nav>
 </body>
 </html>

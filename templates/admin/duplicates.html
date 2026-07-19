@@ -1,0 +1,116 @@
+{% extends "admin/base.html" %}
+{% set active = 'duplicates' %}
+{% block title %}Duplicate Detection{% endblock %}
+{% block content %}
+  <h2>Duplicate Detection ({{ pairs|length }} candidate pairs)</h2>
+
+  <div class="admin-card">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:12px">
+      <form method="GET" style="display:flex;gap:8px;align-items:center">
+        <label style="font-size:12px;color:#6c7a94">Similarity threshold</label>
+        <input type="number" name="threshold" step="0.05" min="0.5" max="1.0" value="{{ threshold }}"
+               style="width:90px;padding:6px 8px">
+        <button type="submit" class="btn-sm btn-primary">Recompute</button>
+      </form>
+      <div style="font-size:12px;color:#6c7a94">
+        trigram-index size: <strong>{{ total_trigrams }}</strong> rows
+      </div>
+    </div>
+
+    {% if total_trigrams == 0 %}
+      <div style="padding:14px;background:#fff8d6;border:1px solid #f0d97b;border-radius:6px;color:#7a5a00">
+        Trigram index is empty. Run
+        <code>python3 scripts/build_trigram_index.py</code>
+        to populate <code>question_trigrams</code>, then reload.
+      </div>
+    {% elif not pairs %}
+      <p style="color:#6c7a94">No candidate pairs at threshold {{ threshold }}. Nice.</p>
+    {% else %}
+      {% for p in pairs %}
+        <div class="dupe-pair" id="pair-{{ loop.index }}">
+          <div class="dupe-head">
+            <strong>Pair #{{ loop.index }}</strong>
+            <span class="chip jaccard">jaccard = {{ p.jaccard }}</span>
+            <span class="chip subtle">shared: {{ p.isize }} trigrams</span>
+            <span class="chip subtle">sizes: {{ p.n1 }} / {{ p.n2 }}</span>
+            <span style="margin-left:auto;font-size:11px;color:#6c7a94">
+              suggested: keep #{{ p.suggested_keep }}, disable #{{ p.suggested_disable }}
+            </span>
+          </div>
+          <div class="dupe-cols">
+            {% for q in [p.q1, p.q2] %}
+              <div class="dupe-col{% if q.id == p.suggested_keep %} winner{% endif %}">
+                <div class="dupe-col-head">
+                  <a href="/admin/questions/{{ q.id }}/edit" style="text-decoration:none">
+                    <strong>Q#{{ q.id }}</strong>
+                  </a>
+                  <span class="chip subtle">{{ q.topic_name or '—' }}</span>
+                  {% if q.pyq_exam %}<span class="chip pyq">PYQ {{ q.pyq_exam }}{% if q.pyq_year %} {{ q.pyq_year }}{% endif %}</span>{% endif %}
+                  <span class="chip conf-{{ q.confidence or 'unknown' }}">{{ q.confidence or 'unknown' }}</span>
+                  {% set refs = p.q1_refs if loop.index0 == 0 else p.q2_refs %}
+                  {% if refs > 0 %}<span class="chip ref-warn">referenced in {{ refs }} tests</span>{% endif %}
+                </div>
+                <div class="qtext">{{ q.question_text }}</div>
+                <ol class="opts" type="A">
+                  <li{% if q.correct_option == 'A' %} class="correct"{% endif %}>{{ q.option_a }}</li>
+                  <li{% if q.correct_option == 'B' %} class="correct"{% endif %}>{{ q.option_b }}</li>
+                  <li{% if q.correct_option == 'C' %} class="correct"{% endif %}>{{ q.option_c }}</li>
+                  <li{% if q.correct_option == 'D' %} class="correct"{% endif %}>{{ q.option_d }}</li>
+                </ol>
+                {% if q.explanation %}<div class="expl">{{ q.explanation[:400] }}{% if q.explanation|length > 400 %}…{% endif %}</div>{% endif %}
+              </div>
+            {% endfor %}
+          </div>
+          <div class="dupe-actions">
+            <button class="btn-sm btn-success" onclick="dupeDisable({{ p.q2.id }}, {{ p.q1.id }}, {{ loop.index }})">Keep #{{ p.q1.id }}, disable #{{ p.q2.id }}</button>
+            <button class="btn-sm btn-outline" onclick="dupeDisable({{ p.q1.id }}, {{ p.q2.id }}, {{ loop.index }})">Keep #{{ p.q2.id }}, disable #{{ p.q1.id }}</button>
+            <button class="btn-sm btn-outline" onclick="markSeen({{ loop.index }})">Not a dupe (skip)</button>
+          </div>
+        </div>
+      {% endfor %}
+    {% endif %}
+  </div>
+
+  <style>
+    .dupe-pair { border:1px solid #e5eaf3; border-radius:10px; margin-bottom:16px; overflow:hidden; }
+    .dupe-pair.dimmed { opacity:0.4; }
+    .dupe-head { display:flex; align-items:center; gap:10px; padding:10px 14px; background:#f8f9fc; border-bottom:1px solid #e5eaf3; flex-wrap:wrap; }
+    .dupe-head .chip { display:inline-block; padding:2px 8px; border-radius:10px; background:#eef1f7; color:#404b60; font-size:11px; font-weight:600; }
+    .dupe-head .chip.jaccard { background:#e0edff; color:#054695; }
+    .dupe-head .chip.subtle { background:#f6f8fb; color:#6c7a94; font-weight:500; }
+    .dupe-cols { display:grid; grid-template-columns:1fr 1fr; }
+    .dupe-col { padding:12px 14px; border-right:1px solid #e5eaf3; }
+    .dupe-col:last-child { border-right:none; }
+    .dupe-col.winner { background:#f4fbf6; }
+    .dupe-col-head { display:flex; align-items:center; gap:6px; margin-bottom:8px; flex-wrap:wrap; }
+    .dupe-col-head .chip { display:inline-block; padding:2px 8px; border-radius:10px; background:#eef1f7; color:#404b60; font-size:11px; font-weight:600; }
+    .dupe-col-head .chip.pyq { background:#e0edff; color:#054695; }
+    .dupe-col-head .chip.subtle { background:#f6f8fb; color:#6c7a94; font-weight:500; }
+    .dupe-col-head .chip.ref-warn { background:#ffd6d6; color:#900; }
+    .dupe-col-head .chip.conf-medium { background:#ffe4b5; color:#7a5a00; }
+    .dupe-col-head .chip.conf-high { background:#d6f5db; color:#1e5a2f; }
+    .qtext { font-size:13px; line-height:1.5; white-space:pre-wrap; margin-bottom:6px; }
+    .dupe-col ol.opts { padding-left:24px; margin:6px 0; }
+    .dupe-col ol.opts li { font-size:12px; padding:1px 4px; }
+    .dupe-col ol.opts li.correct { background:#eaf9ee; color:#1e5a2f; font-weight:600; border-radius:4px; }
+    .expl { font-size:11px; color:#6c7a94; margin-top:6px; padding:6px 8px; background:#f8f9fc; border-radius:5px; }
+    .dupe-actions { padding:10px 14px; background:#fafbfd; border-top:1px solid #e5eaf3; display:flex; gap:8px; flex-wrap:wrap; }
+  </style>
+
+  <script>
+    async function dupeDisable(disableId, keepId, pairIdx) {
+      if (!confirm(`Disable Q#${disableId} (keep #${keepId})?`)) return;
+      const r = await fetch(`/admin/api/duplicate/disable/${disableId}`, { method: 'POST' });
+      if (r.ok) {
+        const p = document.getElementById(`pair-${pairIdx}`);
+        if (p) p.classList.add('dimmed');
+      } else {
+        alert('Action failed');
+      }
+    }
+    function markSeen(pairIdx) {
+      const p = document.getElementById(`pair-${pairIdx}`);
+      if (p) p.classList.add('dimmed');
+    }
+  </script>
+{% endblock %}

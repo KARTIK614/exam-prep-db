@@ -12,6 +12,8 @@ data/flask_session/
 data/exam_prep.db-journal
 data/exam_prep.db-shm
 data/exam_prep.db-wal
+data/mcq_pdfs/
+data/extracted_questions/
 .pytest_cache/
 .coverage
 htmlcov/

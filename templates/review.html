@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Review Queue — Exam Prep Platform</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('theme');
+        var theme = saved || (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.dataset.theme = theme;
+      } catch (_e) { document.documentElement.dataset.theme = 'light'; }
+    })();
+  </script>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <h1>Exam Platform</h1>
+      <span>Exam Prep Platform</span>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="/"><span class="icon">&#9632;</span> Dashboard</a>
+      <a href="/test/setup"><span class="icon">&#9654;</span> Take Test</a>
+      <a href="/analytics"><span class="icon">&#9733;</span> Analytics</a>
+      <a href="/errorlog"><span class="icon">&#9888;</span> Error Log</a>
+      <a href="/review" class="active"><span class="icon">&#8635;</span> Review</a>
+      <a href="/bookmarks"><span class="icon">&#9733;</span> Bookmarks</a>
+      <a href="/search"><span class="icon">&#128269;</span> Search</a>
+      <a href="/logout" class="nav-logout" style="margin-top:auto"><span class="icon">&#8592;</span> Logout</a>
+    </nav>
+    <button type="button" class="theme-toggle-btn" onclick="toggleTheme()" title="Toggle theme" aria-pressed="false">
+      <span class="theme-icon" aria-hidden="true">&#9788;</span>
+      <span class="theme-label">Theme</span>
+    </button>
+  </aside>
+
+  <header class="mobile-topbar" role="banner">
+    <a href="/" class="mobile-brand">Exam Platform</a>
+    <div class="mobile-topbar-actions">
+      <button type="button" class="icon-btn" onclick="openSearch()" title="Search">&#128269;</button>
+      <button type="button" class="icon-btn" onclick="toggleTheme()" title="Toggle theme">&#9788;</button>
+      <a class="icon-btn" href="/logout" title="Logout">&#8592;</a>
+    </div>
+  </header>
+
+  <div class="main">
+    <div class="page-header">
+      <h2>Review Queue</h2>
+      <p>Leitner-5 spaced repetition &middot; correct answers move up a box, wrong answers move back</p>
+    </div>
+
+    <div class="content">
+      <div class="card mb-4 srs-summary">
+        <div class="card-body">
+          <div class="srs-summary-row">
+            <div>
+              <div class="srs-due-big">{{ summary.due_today }}</div>
+              <div class="srs-due-label">card{{ '' if summary.due_today == 1 else 's' }} due today</div>
+            </div>
+            <div class="srs-box-strip" aria-label="Cards per box">
+              {% for b in range(1, max_box + 1) %}
+                <div class="srs-box-cell" title="Box {{ b }}: {{ summary.by_box[b] }} card(s), interval {{ {1:1,2:3,3:7,4:14,5:30}[b] }}d">
+                  <div class="srs-box-num">Box {{ b }}</div>
+                  <div class="srs-box-count">{{ summary.by_box[b] }}</div>
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {% if not cards %}
+        <div class="card">
+          <div class="card-body">
+            <div class="empty-state">
+              <div class="icon">&#10003;</div>
+              <p><strong>No cards due today.</strong><br>
+              Wrong answers from your tests appear here the next day.<br>
+              Total in queue: {{ summary.total }}.</p>
+            </div>
+          </div>
+        </div>
+      {% else %}
+        <div id="srs-app" data-total="{{ cards|length }}">
+          <div class="card mb-4 srs-progress">
+            <div class="card-body">
+              <div class="flex-between">
+                <div>Card <span id="srs-current-num">1</span> of {{ cards|length }}</div>
+                <div>
+                  <span id="srs-done-ok" class="badge badge-success">0 got it</span>
+                  <span id="srs-done-no" class="badge badge-danger">0 missed</span>
+                </div>
+              </div>
+              <div class="score-bar" style="margin-top:8px;width:100%">
+                <div id="srs-progress-fill" class="score-bar-fill" style="width:0%;background:var(--primary)"></div>
+              </div>
+            </div>
+          </div>
+
+          {% for c in cards %}
+          <div class="card srs-card" id="srs-card-{{ loop.index0 }}"
+               data-error-id="{{ c.error_id }}"
+               data-correct="{{ c.correct_option }}"
+               data-if-ok-days="{{ c.if_ok_days }}"
+               data-if-ok-box="{{ c.if_ok_box }}"
+               data-if-no-days="{{ c.if_no_days }}"
+               data-if-no-box="{{ c.if_no_box }}"
+               style="{{ '' if loop.index0 == 0 else 'display:none' }}">
+            <div class="card-body">
+              <div class="srs-card-meta">
+                <span class="badge badge-primary">Box {{ c.sr_box or 1 }}</span>
+                <span class="badge badge-muted">{{ c.topic_name }}</span>
+                <span class="badge badge-muted">{{ c.difficulty or 'medium' }}</span>
+                {% if c.sr_last_reviewed %}
+                  <span style="color:var(--text-muted);font-size:12px">Last seen {{ c.sr_last_reviewed[:10] }}</span>
+                {% else %}
+                  <span style="color:var(--text-muted);font-size:12px">Never reviewed</span>
+                {% endif %}
+              </div>
+
+              <div class="srs-question">{{ c.question_text }}</div>
+
+              <div class="srs-options">
+                {% for letter, opt in [('A', c.option_a), ('B', c.option_b), ('C', c.option_c), ('D', c.option_d)] %}
+                  <button type="button" class="srs-option" data-letter="{{ letter }}">
+                    <strong>{{ letter }}.</strong> {{ opt }}
+                  </button>
+                {% endfor %}
+              </div>
+
+              <div class="srs-reveal" style="display:none">
+                <div class="srs-reveal-answer">
+                  Correct answer: <strong>{{ c.correct_option }}</strong>
+                </div>
+                {% if c.explanation %}
+                  <div class="srs-reveal-explanation">{{ c.explanation }}</div>
+                {% endif %}
+                <div class="srs-reveal-buttons">
+                  <button type="button" class="btn btn-outline srs-btn-miss">
+                    Missed &mdash; back to box {{ c.if_no_box }} (review in {{ c.if_no_days }}d)
+                  </button>
+                  <button type="button" class="btn btn-primary srs-btn-got">
+                    Got it &mdash; box {{ c.if_ok_box }} (review in {{ c.if_ok_days }}d)
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+
+          <div class="card" id="srs-done-card" style="display:none">
+            <div class="card-body">
+              <div class="empty-state">
+                <div class="icon">&#10003;</div>
+                <p><strong>Queue cleared for today.</strong><br>
+                Come back tomorrow &mdash; new cards will be due.</p>
+                <div style="margin-top:16px">
+                  <a href="/" class="btn btn-primary">Back to Dashboard</a>
+                  <a href="/errorlog" class="btn btn-outline">Full Error Log</a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <script src="/static/script.js"></script>
+  <script>
+    (function() {
+      const app = document.getElementById('srs-app');
+      if (!app) return;
+      const total = parseInt(app.dataset.total, 10);
+      let idx = 0, okCount = 0, missCount = 0;
+
+      function card(i) { return document.getElementById('srs-card-' + i); }
+
+      function show(i) {
+        for (let j = 0; j < total; j++) {
+          const c = card(j);
+          if (c) c.style.display = (j === i) ? '' : 'none';
+        }
+        document.getElementById('srs-current-num').textContent = (i + 1);
+        const pct = total ? Math.round(((okCount + missCount) / total) * 100) : 0;
+        document.getElementById('srs-progress-fill').style.width = pct + '%';
+      }
+
+      function bindCard(c) {
+        const correct = c.dataset.correct;
+        const reveal = c.querySelector('.srs-reveal');
+        c.querySelectorAll('.srs-option').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const chosen = btn.dataset.letter;
+            c.querySelectorAll('.srs-option').forEach(b => {
+              b.disabled = true;
+              if (b.dataset.letter === correct) b.classList.add('is-correct');
+              else if (b === btn) b.classList.add('is-wrong');
+            });
+            reveal.style.display = '';
+          });
+        });
+
+        async function submit(wasCorrect) {
+          const errorId = parseInt(c.dataset.errorId, 10);
+          try {
+            await fetch('/api/review_answer', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({error_id: errorId, was_correct: !!wasCorrect}),
+            });
+          } catch (e) { /* offline / network — the UI still advances */ }
+          if (wasCorrect) {
+            okCount++;
+            document.getElementById('srs-done-ok').textContent = okCount + ' got it';
+          } else {
+            missCount++;
+            document.getElementById('srs-done-no').textContent = missCount + ' missed';
+          }
+          idx++;
+          if (idx >= total) {
+            for (let j = 0; j < total; j++) { if (card(j)) card(j).style.display = 'none'; }
+            document.getElementById('srs-done-card').style.display = '';
+            document.getElementById('srs-progress-fill').style.width = '100%';
+          } else {
+            show(idx);
+          }
+        }
+
+        c.querySelector('.srs-btn-got').addEventListener('click', () => submit(true));
+        c.querySelector('.srs-btn-miss').addEventListener('click', () => submit(false));
+      }
+
+      for (let i = 0; i < total; i++) {
+        const c = card(i);
+        if (c) bindCard(c);
+      }
+    })();
+  </script>
+
+  <nav class="mobile-bottomnav" role="navigation">
+    <a href="/"><span class="icon">&#9632;</span> Dash</a>
+    <a href="/test/setup"><span class="icon">&#9654;</span> Test</a>
+    <a href="/analytics"><span class="icon">&#9733;</span> Stats</a>
+    <a href="/errorlog"><span class="icon">&#9888;</span> Errs</a>
+    <a href="/search"><span class="icon">&#128269;</span> Find</a>
+  </nav>
+</body>
+</html>

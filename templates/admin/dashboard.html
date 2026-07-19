@@ -5,6 +5,9 @@
   <h2>Admin Dashboard</h2>
   <div class="stat-grid">
     <div class="stat-block"><div class="num">{{ stats.flags_open }}</div><div class="lbl">Open Flags</div></div>
+    <div class="stat-block"><a href="/admin/review" style="text-decoration:none;color:inherit"><div class="num">{{ stats.review_medium or 0 }}</div><div class="lbl">Medium-Conf Review</div></a></div>
+    <div class="stat-block"><a href="/admin/synthesize" style="text-decoration:none;color:inherit"><div class="num">{{ stats.deficit_topics or 0 }}</div><div class="lbl">Thin Topics (&lt;20)</div></a></div>
+    <div class="stat-block"><div class="num">{{ stats.review_synthetic or 0 }}</div><div class="lbl">Synthetic Rows</div></div>
     <div class="stat-block"><div class="num">{{ stats.questions }}</div><div class="lbl">Questions</div></div>
     <div class="stat-block"><div class="num">{{ stats.questions_disabled }}</div><div class="lbl">Disabled</div></div>
     <div class="stat-block"><div class="num">{{ stats.topics }}</div><div class="lbl">Topics</div></div>

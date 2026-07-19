@@ -146,3 +146,115 @@ def extract_questions_from_pdf(
         },
         "model": model,
     }
+
+
+# ─── Plan D §4 — Claude synthesis for under-represented topics ────────
+
+SYNTHESIS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "questions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "question_text": {"type": "string"},
+                    "option_a": {"type": "string"},
+                    "option_b": {"type": "string"},
+                    "option_c": {"type": "string"},
+                    "option_d": {"type": "string"},
+                    "correct_option": {"type": "string", "enum": ["A", "B", "C", "D"]},
+                    "explanation": {"type": "string"},
+                    "difficulty": {"type": "string", "enum": ["easy", "medium", "hard"]},
+                    "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+                    "source": {"type": "string"},
+                    "notes": {"type": "string"},
+                },
+                "required": [
+                    "question_text", "option_a", "option_b", "option_c", "option_d",
+                    "correct_option", "explanation", "difficulty",
+                ],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["questions"],
+    "additionalProperties": False,
+}
+
+
+def synthesize_questions(
+    prompt: str,
+    n: int,
+    model: str = "claude-opus-4-7",
+) -> dict[str, Any]:
+    """Call Claude to generate synthetic MCQs for a specific topic.
+
+    The prompt is fully assembled by the caller (see content_metadata.SYNTHESIS_PROMPT).
+    We use adaptive thinking since this is a quality-sensitive generation
+    task — the model benefits from thinking budget on hard sub-topics.
+
+    Returns:
+        {"ok": True,  "questions": [...], "usage": {...}, "model": "..."}
+        {"ok": False, "error": "..."}
+    """
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        return {"ok": False, "error": "ANTHROPIC_API_KEY env var is not set."}
+
+    try:
+        import anthropic
+    except ImportError:
+        return {"ok": False, "error": "anthropic package not installed."}
+
+    client = anthropic.Anthropic(api_key=api_key)
+
+    # Output budget scales with question count: ~500 tok/question is
+    # generous for a bilingual MCQ + explanation.
+    max_tokens = max(4000, min(32000, 800 * max(n, 1)))
+
+    try:
+        response = client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            thinking={"type": "adaptive"},
+            messages=[
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": prompt}],
+                }
+            ],
+            output_config={"format": {"type": "json_schema", "schema": SYNTHESIS_SCHEMA}},
+        )
+    except anthropic.BadRequestError as exc:
+        return {"ok": False, "error": f"Bad request to Anthropic: {exc.message}"}
+    except anthropic.AuthenticationError:
+        return {"ok": False, "error": "Anthropic auth failed. Check ANTHROPIC_API_KEY."}
+    except anthropic.RateLimitError:
+        return {"ok": False, "error": "Anthropic rate limit hit. Wait and retry."}
+    except anthropic.APIStatusError as exc:
+        return {"ok": False, "error": f"Anthropic API error {exc.status_code}: {exc.message}"}
+    except anthropic.APIConnectionError:
+        return {"ok": False, "error": "Network error contacting Anthropic. Retry."}
+    except Exception as exc:  # noqa: BLE001 — the caller wants a structured error
+        return {"ok": False, "error": f"Unexpected error: {exc}"}
+
+    text = next((b.text for b in response.content if b.type == "text"), None)
+    if not text:
+        return {"ok": False, "error": "Empty response from Claude."}
+
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        return {"ok": False, "error": f"Failed to parse Claude JSON: {exc}", "raw": text[:2000]}
+
+    questions = parsed.get("questions", [])
+    return {
+        "ok": True,
+        "questions": questions,
+        "usage": {
+            "input_tokens": response.usage.input_tokens,
+            "output_tokens": response.usage.output_tokens,
+        },
+        "model": model,
+    }

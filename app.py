@@ -43,6 +43,7 @@ def create_app(config_object=Config):
     from bp_doubt import bp as doubt_bp
     from bp_diag import bp as diag_bp
     from bp_admin import bp as admin_bp
+    from bp_review import bp as review_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(main_bp)
@@ -53,6 +54,7 @@ def create_app(config_object=Config):
     app.register_blueprint(doubt_bp, url_prefix="/api/doubt")
     app.register_blueprint(diag_bp)
     app.register_blueprint(admin_bp)
+    app.register_blueprint(review_bp)
 
     return app
 

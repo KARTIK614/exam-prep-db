@@ -5,6 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dashboard — Exam Prep Platform</title>
   <link rel="stylesheet" href="/static/style.css">
+  <script>
+    // Inline theme setter — runs before CSS applies to prevent flash-of-wrong-theme.
+    (function () {
+      try {
+        var saved = localStorage.getItem('theme');
+        var theme = saved || (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.dataset.theme = theme;
+      } catch (_e) {
+        document.documentElement.dataset.theme = 'light';
+      }
+    })();
+  </script>
 </head>
 <body>
   <aside class="sidebar">
@@ -17,9 +29,28 @@
       <a href="/test/setup"><span class="icon">&#9654;</span> Take Test</a>
       <a href="/analytics"><span class="icon">&#9733;</span> Analytics</a>
       <a href="/errorlog"><span class="icon">&#9888;</span> Error Log</a>
-      <a href="/logout" class="nav-logout" style="margin-top:auto;color:#c04040"><span class="icon">&#8592;</span> Logout</a>
+      <a href="/review"><span class="icon">&#8635;</span> Review
+        {% if sr_due_today %}<span class="badge badge-primary" style="margin-left:6px">{{ sr_due_today }}</span>{% endif %}
+      </a>
+      <a href="/bookmarks"><span class="icon">&#9733;</span> Bookmarks</a>
+      <a href="/search"><span class="icon">&#128269;</span> Search</a>
+      <a href="/logout" class="nav-logout" style="margin-top:auto"><span class="icon">&#8592;</span> Logout</a>
     </nav>
+    <button type="button" class="theme-toggle-btn" onclick="toggleTheme()" title="Toggle theme" aria-pressed="false">
+      <span class="theme-icon" aria-hidden="true">&#9788;</span>
+      <span class="theme-label">Theme</span>
+    </button>
   </aside>
+
+  <!-- Mobile top bar (hidden ≥641px) -->
+  <header class="mobile-topbar" role="banner">
+    <a href="/" class="mobile-brand">Exam Platform</a>
+    <div class="mobile-topbar-actions">
+      <button type="button" class="icon-btn" onclick="openSearch()" title="Search">&#128269;</button>
+      <button type="button" class="icon-btn" onclick="toggleTheme()" title="Toggle theme">&#9788;</button>
+      <a class="icon-btn" href="/logout" title="Logout">&#8592;</a>
+    </div>
+  </header>
 
   <div class="main">
     <div class="page-header">
@@ -28,6 +59,55 @@
     </div>
 
     <div class="content">
+      <!-- Hero card: consistency + next-weak-topic + SR pill -->
+      <div class="hero-card">
+        <div class="hero-consistency">
+          <div class="consistency-value">{{ consistency_score }}<span class="consistency-pct">%</span></div>
+          <div class="consistency-label">consistency &middot; {{ active_days }}/20 active days</div>
+          <div class="activity-strip" aria-label="28-day activity">
+            {% for cell in activity_28d %}
+              <span class="activity-cell {{ 'level-3' if cell.has_activity else 'level-0' }}"
+                    title="{{ cell.date }}{{ ' — active' if cell.has_activity else '' }}"></span>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="hero-divider"></div>
+        <div class="hero-next">
+          {% if next_topics %}
+            {% set nt = next_topics[0] %}
+            <div class="hero-next-eyebrow">Study next</div>
+            <div class="hero-next-name">{{ nt.name }} <span class="weight-badge">{{ nt.weightage }} pts</span></div>
+            <div class="hero-next-reason">{{ nt.reason|safe }}</div>
+            <div class="hero-next-actions">
+              <a href="/test/setup?topic_id={{ nt.topic_id }}" class="btn btn-primary">Practice weakest</a>
+              {% if sr_due_today %}
+                <a href="/review" class="btn btn-outline">Review {{ sr_due_today }} card{{ '' if sr_due_today == 1 else 's' }} due</a>
+              {% endif %}
+            </div>
+            {% if next_topics|length > 1 %}
+              <details class="hero-next-more">
+                <summary>See top {{ next_topics|length }}</summary>
+                <ul>
+                  {% for alt in next_topics[1:] %}
+                    <li><strong>{{ alt.name }}</strong> ({{ alt.weightage }} pts) &mdash; {{ alt.reason|safe }}</li>
+                  {% endfor %}
+                </ul>
+              </details>
+            {% endif %}
+          {% else %}
+            <div class="hero-next-eyebrow">Study next</div>
+            <div class="hero-next-name">All caught up</div>
+            <div class="hero-next-reason">No topic is currently below target. Take a test on an untested topic to expand coverage.</div>
+            <div class="hero-next-actions">
+              <a href="/test/setup" class="btn btn-primary">Start test</a>
+              {% if sr_due_today %}
+                <a href="/review" class="btn btn-outline">Review {{ sr_due_today }} card{{ '' if sr_due_today == 1 else 's' }} due</a>
+              {% endif %}
+            </div>
+          {% endif %}
+        </div>
+      </div>
+
       <!-- Stats Row -->
       <div class="stat-grid">
         <div class="stat-card primary">
@@ -57,16 +137,66 @@
         <a href="/analytics" class="btn btn-outline btn-lg">Full Analytics</a>
       </div>
 
+      <!-- Mastery Grid -->
+      <div class="card mb-4">
+        <div class="card-header">
+          Topic Mastery
+          <span class="badge badge-muted">{{ tiles|length }} topics</span>
+        </div>
+        <div class="card-body">
+          {% if tiles %}
+            <div class="mastery-grid">
+              {% for t in tiles %}
+                <div class="topic-tile tier-{{ t.tier }}">
+                  <div class="tile-top">
+                    <div class="tile-name">{{ t.name }}</div>
+                    <span class="weight-badge">{{ t.weightage }}</span>
+                  </div>
+                  {% if t.tier == 'untested' %}
+                    <div class="score-bar"><div class="score-bar-fill" style="width:0%;background:var(--border)"></div></div>
+                    <div class="tile-meta">untested &middot; Paper {{ t.paper }}</div>
+                  {% else %}
+                    {% set s = t.current_score or 0 %}
+                    <div class="score-bar">
+                      <div class="score-bar-fill" style="width:{{ s }}%;background:
+                        {% if t.tier == 'weak' %}var(--danger)
+                        {% elif t.tier == 'on_track' %}var(--warning)
+                        {% else %}var(--success){% endif %}"></div>
+                    </div>
+                    <div class="tile-meta">
+                      <span style="font-weight:600">{{ "%.0f"|format(s) }}%</span>
+                      &middot; {{ t.test_count }} test{{ '' if t.test_count == 1 else 's' }}
+                      {% if t.days_since is not none %}&middot; {{ t.days_since }}d ago{% endif %}
+                    </div>
+                  {% endif %}
+                </div>
+              {% endfor %}
+            </div>
+            <div class="mastery-legend">
+              <span class="mastery-legend-item"><span class="legend-swatch" style="background:var(--danger)"></span>weak &lt;{{ weak_threshold }}%</span>
+              <span class="mastery-legend-item"><span class="legend-swatch" style="background:var(--warning)"></span>on-track</span>
+              <span class="mastery-legend-item"><span class="legend-swatch" style="background:var(--success)"></span>mastered &ge;{{ target_score }}%</span>
+              <span class="mastery-legend-item"><span class="legend-swatch" style="background:var(--border)"></span>untested</span>
+            </div>
+          {% else %}
+            <div class="empty-state">
+              <div class="icon">&#9632;</div>
+              <p>No topics seeded yet.<br>Run <code>seed.py</code> or import via admin.</p>
+            </div>
+          {% endif %}
+        </div>
+      </div>
+
       <div class="grid-2">
-        <!-- Weak Topics -->
+        <!-- Priority Review (weak topics up to 5) -->
         <div class="card">
           <div class="card-header">
-            &#9888; Weak Topics
+            &#9888; Priority Review
             <span class="badge badge-danger">{{ weak_topics|length }}</span>
           </div>
           <div class="card-body">
             {% if weak_topics %}
-              {% for t in weak_topics[:8] %}
+              {% for t in weak_topics[:5] %}
                 <div class="topic-item">
                   <div>
                     <div class="topic-name">{{ t.name }}</div>
@@ -83,45 +213,12 @@
             {% else %}
               <div class="empty-state">
                 <div class="icon">&#10003;</div>
-                <p>No weak topics detected yet.<br>Take a diagnostic test to identify gaps.</p>
+                <p>No weak topics detected.<br>Full mastery breakdown above.</p>
               </div>
             {% endif %}
           </div>
         </div>
 
-        <!-- Strong Topics -->
-        <div class="card">
-          <div class="card-header">
-            &#9733; Strong Topics
-            <span class="badge badge-success">{{ strong_topics|length }}</span>
-          </div>
-          <div class="card-body">
-            {% if strong_topics %}
-              {% for t in strong_topics[:8] %}
-                <div class="topic-item">
-                  <div>
-                    <div class="topic-name">{{ t.name }}</div>
-                    <div class="topic-meta">{{ t.subject }} &middot; Paper {{ t.paper }} &middot; {{ t.test_count }} tests</div>
-                  </div>
-                  <div style="display:flex;align-items:center;gap:10px">
-                    <div class="score-bar">
-                      <div class="score-bar-fill" style="width:{{ t.current_score or 0 }}%;background:var(--success)"></div>
-                    </div>
-                    <span style="font-size:13px;font-weight:600;color:var(--success)">{{ "%.0f"|format(t.current_score or 0) }}%</span>
-                  </div>
-                </div>
-              {% endfor %}
-            {% else %}
-              <div class="empty-state">
-                <div class="icon">&#9733;</div>
-                <p>No strong topics yet.<br>Keep practicing to build mastery.</p>
-              </div>
-            {% endif %}
-          </div>
-        </div>
-      </div>
-
-      <div class="grid-2">
         <!-- Recent Errors -->
         <div class="card">
           <div class="card-header">
@@ -147,7 +244,9 @@
             {% endif %}
           </div>
         </div>
+      </div>
 
+      <div class="grid-2">
         <!-- Error Distribution -->
         <div class="card">
           <div class="card-header">Error Type Distribution</div>
@@ -174,41 +273,43 @@
             {% endif %}
           </div>
         </div>
-      </div>
 
-      <!-- Paper-wise Performance -->
-      {% if paper_perf %}
-      <div class="card mt-4">
-        <div class="card-header">Paper-wise Performance</div>
-        <div class="card-body">
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr><th>Paper</th><th>Tests</th><th>Avg Score</th><th>Status</th></tr>
-              </thead>
-              <tbody>
-                {% for p in paper_perf %}
-                <tr>
-                  <td><strong>Paper {{ p.paper }}</strong></td>
-                  <td>{{ p.tests }}</td>
-                  <td>{{ "%.1f"|format(p.avg or 0) }}%</td>
-                  <td>
-                    {% if (p.avg or 0) >= 60 %}
-                      <span class="badge badge-success">On Track</span>
-                    {% elif (p.avg or 0) >= 40 %}
-                      <span class="badge badge-warning">Needs Work</span>
-                    {% else %}
-                      <span class="badge badge-danger">At Risk</span>
-                    {% endif %}
-                  </td>
-                </tr>
-                {% endfor %}
-              </tbody>
-            </table>
+        <!-- Paper-wise Performance -->
+        <div class="card">
+          <div class="card-header">Paper-wise Performance</div>
+          <div class="card-body">
+            {% if paper_perf %}
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>Paper</th><th>Tests</th><th>Avg Score</th><th>Status</th></tr>
+                  </thead>
+                  <tbody>
+                    {% for p in paper_perf %}
+                    <tr>
+                      <td><strong>Paper {{ p.paper }}</strong></td>
+                      <td>{{ p.tests }}</td>
+                      <td>{{ "%.1f"|format(p.avg or 0) }}%</td>
+                      <td>
+                        {% if (p.avg or 0) >= 60 %}
+                          <span class="badge badge-success">On Track</span>
+                        {% elif (p.avg or 0) >= 40 %}
+                          <span class="badge badge-warning">Needs Work</span>
+                        {% else %}
+                          <span class="badge badge-danger">At Risk</span>
+                        {% endif %}
+                      </td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            {% else %}
+              <div class="empty-state"><p>No paper data yet.</p></div>
+            {% endif %}
           </div>
         </div>
       </div>
-      {% endif %}
 
       <!-- Untested Topics -->
       {% if untested %}
@@ -225,6 +326,16 @@
       {% endif %}
     </div>
   </div>
+
+  <!-- Mobile bottom nav (hidden ≥641px) -->
+  <nav class="mobile-bottomnav" role="navigation">
+    <a href="/" class="active"><span class="icon">&#9632;</span> Dash</a>
+    <a href="/test/setup"><span class="icon">&#9654;</span> Test</a>
+    <a href="/analytics"><span class="icon">&#9733;</span> Stats</a>
+    <a href="/errorlog"><span class="icon">&#9888;</span> Errs</a>
+    <a href="/search"><span class="icon">&#128269;</span> Find</a>
+  </nav>
+
   <script src="/static/script.js"></script>
 </body>
 </html>

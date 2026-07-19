@@ -1,0 +1,126 @@
+{% extends "admin/base.html" %}
+{% set active = 'synthesize' %}
+{% block title %}Topic Backfill{% endblock %}
+{% block content %}
+  <h2>Under-Represented Topic Backfill</h2>
+
+  <div class="admin-card">
+    <h3 style="margin-top:0">Deficit Report — Paper II topics with fewer than 20 rows</h3>
+    {% if deficit %}
+    <table class="admin-tbl">
+      <thead><tr><th>Topic</th><th>Weightage</th><th>Rows</th><th>Synthetic</th><th>Deficit</th><th></th></tr></thead>
+      <tbody>
+        {% for t in deficit %}
+        <tr>
+          <td><strong>{{ t.name }}</strong> <span style="color:#6c7a94">(id {{ t.id }})</span></td>
+          <td>{{ t.weightage }}</td>
+          <td>{{ t.n_rows }}</td>
+          <td>{{ t.n_synthetic }}</td>
+          <td style="color:#c00;font-weight:600">-{{ (t.weightage * 10) - t.n_rows }}</td>
+          <td><button class="btn-sm btn-primary" onclick="prepBatch({{ t.id }}, '{{ t.name|e }}')">Synthesize…</button></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p style="color:#6c7a94">All Paper-II topics have ≥ 20 rows. Nice work.</p>
+    {% endif %}
+  </div>
+
+  <div class="admin-card">
+    <h3 style="margin-top:0">Generate Synthetic Questions</h3>
+    <p style="color:#6c7a94;font-size:12px;margin-top:0">
+      Rows are inserted with <code>source='synthetic-v1'</code> and <code>confidence='medium'</code>
+      so they land in <a href="/admin/review?filter=synthetic">/admin/review</a> for human sign-off.
+      The 40%-per-topic cap is enforced server-side.
+    </p>
+    <form id="synth-form" onsubmit="return submitBatch(event)">
+      <div class="form-row"><label>Topic</label>
+        <select name="topic_id" id="synth-topic" required>
+          <option value="">Choose a topic…</option>
+          {% for t in topics %}
+            <option value="{{ t.id }}" data-name="{{ t.name }}" data-active="{{ t.n_active }}" data-synth="{{ t.n_synthetic }}">
+              {{ t.name }} — active={{ t.n_active }} synth={{ t.n_synthetic }} (w={{ t.weightage }})
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-row"><label>Count (1-40)</label>
+        <input type="number" name="count" id="synth-count" value="10" min="1" max="40" required style="max-width:120px">
+      </div>
+      <div class="form-row"><label>Sub-topics hint</label>
+        <input type="text" name="sub_topics" id="synth-sub" placeholder="e.g. sorting, graph algorithms, time complexity" style="max-width:520px">
+      </div>
+      <div class="form-row"><label></label>
+        <button type="submit" class="btn-sm btn-primary" id="synth-go">Generate via Claude</button>
+        <span id="synth-status" style="margin-left:12px;color:#6c7a94;font-size:12px"></span>
+      </div>
+    </form>
+  </div>
+
+  {% if batches %}
+  <div class="admin-card">
+    <h3 style="margin-top:0">Recent Synthesis Batches</h3>
+    <table class="admin-tbl">
+      <thead><tr><th>ID</th><th>Topic</th><th>Requested</th><th>Generated</th><th>Committed</th><th>Model</th><th>Status</th><th>At</th><th></th></tr></thead>
+      <tbody>
+        {% for b in batches %}
+        <tr>
+          <td>{{ b.id }}</td>
+          <td>{{ b.topic_name or '—' }}</td>
+          <td>{{ b.n_requested }}</td>
+          <td>{{ b.n_generated }}</td>
+          <td>{{ b.n_pending }}</td>
+          <td style="font-size:11px">{{ b.model }}</td>
+          <td><span class="flag-cat {{ 'typo' if b.status == 'committed' else ('other' if b.status == 'ready' else 'wrong_answer' if b.status == 'error' else 'bad_latex') }}">{{ b.status }}</span></td>
+          <td style="font-size:11px">{{ b.generated_at }}</td>
+          <td>
+            {% if b.status == 'ready' %}
+              <a class="btn-sm btn-primary" href="/admin/synthesize/{{ b.id }}/preview">Review</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <script>
+    function prepBatch(topicId, topicName) {
+      const sel = document.getElementById('synth-topic');
+      sel.value = topicId;
+      document.getElementById('synth-form').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    async function submitBatch(ev) {
+      ev.preventDefault();
+      const topic_id = document.getElementById('synth-topic').value;
+      const count = parseInt(document.getElementById('synth-count').value, 10);
+      const sub_topics = document.getElementById('synth-sub').value.trim();
+      if (!topic_id) { alert('Pick a topic'); return false; }
+
+      const btn = document.getElementById('synth-go');
+      const status = document.getElementById('synth-status');
+      btn.disabled = true;
+      status.textContent = 'Calling Claude… (may take 30-60s for a batch of 10)';
+
+      try {
+        const r = await fetch('/admin/api/synthesize/preview', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ topic_id: parseInt(topic_id, 10), count, sub_topics }),
+        });
+        const j = await r.json();
+        if (!r.ok) { alert('Failed: ' + (j.error || r.status)); return false; }
+        window.location.href = j.preview_url;
+      } catch (e) {
+        alert('Network error: ' + e.message);
+      } finally {
+        btn.disabled = false;
+        status.textContent = '';
+      }
+      return false;
+    }
+  </script>
+{% endblock %}

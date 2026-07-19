@@ -8,8 +8,14 @@ def get_db():
     if "db" not in g:
         g.db = sqlite3.connect(current_app.config["DB_PATH"])
         g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA journal_mode=WAL")
-        g.db.execute("PRAGMA foreign_keys=ON")
+        # PRAGMA statements are local-sqlite only. Turso/Hrana rejects them with
+        # SQL_PARSE_ERROR; since turso_patch now raises on Hrana errors we must
+        # tolerate that here rather than crash every request.
+        for pragma in ("PRAGMA journal_mode=WAL", "PRAGMA foreign_keys=ON"):
+            try:
+                g.db.execute(pragma)
+            except Exception:  # noqa: BLE001 — pragma is a nice-to-have
+                pass
     return g.db
 
 
@@ -33,14 +39,22 @@ CREATE TABLE IF NOT EXISTS questions (
 CREATE TABLE IF NOT EXISTS mock_tests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at TEXT, completed_at TEXT, paper TEXT, total_questions INTEGER,
-    score REAL, max_score INTEGER, time_taken_sec INTEGER, status TEXT DEFAULT 'in_progress'
+    score REAL, max_score INTEGER, time_taken_sec INTEGER, status TEXT DEFAULT 'in_progress',
+    test_mode TEXT DEFAULT 'practice',
+    duration_sec INTEGER,
+    negative_ratio REAL DEFAULT 0,
+    raw_marks REAL,
+    wrong_count INTEGER,
+    unanswered_count INTEGER
 );
 CREATE TABLE IF NOT EXISTS test_responses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     test_id INTEGER REFERENCES mock_tests(id),
     question_id INTEGER, selected_option TEXT, is_correct INTEGER,
     time_spent_sec REAL, confidence TEXT DEFAULT 'medium',
-    error_type TEXT
+    error_type TEXT,
+    marked_for_review INTEGER DEFAULT 0,
+    visit_count INTEGER DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS error_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,7 +62,10 @@ CREATE TABLE IF NOT EXISTS error_log (
     question_id INTEGER, topic_id INTEGER REFERENCES topics(id),
     selected_option TEXT, correct_option TEXT, error_type TEXT,
     root_cause TEXT, resolved INTEGER DEFAULT 0, created_at TEXT,
-    redo_1_score REAL, redo_2_score REAL
+    redo_1_score REAL, redo_2_score REAL,
+    sr_box INTEGER DEFAULT 1,
+    sr_due_at TEXT,
+    sr_last_reviewed TEXT
 );
 CREATE TABLE IF NOT EXISTS topic_mastery (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,6 +84,10 @@ CREATE TABLE IF NOT EXISTS settings (
 INSERT OR IGNORE INTO settings (key, value) VALUES ('target_score', '75');
 INSERT OR IGNORE INTO settings (key, value) VALUES ('accuracy_focus', 'true');
 INSERT OR IGNORE INTO settings (key, value) VALUES ('weakness_threshold', '60');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('default_neg_ratio', '0.333333');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('default_test_duration_min', '60');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('target_seconds_per_q', '72');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('daily_goal_min', '30');
 
 CREATE TABLE IF NOT EXISTS doubt_cache (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -118,20 +139,96 @@ CREATE TABLE IF NOT EXISTS master_prompts (
     is_default INTEGER DEFAULT 0,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS bookmarks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    question_id INTEGER REFERENCES questions(id),
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    note TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bookmarks_qid ON bookmarks(question_id);
+
+CREATE TABLE IF NOT EXISTS question_trigrams (
+    question_id INTEGER REFERENCES questions(id),
+    trigram TEXT,
+    PRIMARY KEY (question_id, trigram)
+);
+CREATE INDEX IF NOT EXISTS idx_trigrams_trigram ON question_trigrams(trigram);
+
+CREATE TABLE IF NOT EXISTS synthesis_batches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic_id INTEGER REFERENCES topics(id),
+    generated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    n_requested INTEGER,
+    n_generated INTEGER DEFAULT 0,
+    n_approved INTEGER DEFAULT 0,
+    n_disabled INTEGER DEFAULT 0,
+    n_pending INTEGER DEFAULT 0,
+    prompt_hash TEXT,
+    model TEXT,
+    status TEXT DEFAULT 'pending',
+    notes TEXT
+);
 """
+
+# FTS5 virtual table + triggers. Kept separate from SCHEMA because:
+#   * FTS5 may be missing on some libSQL builds — we want to fail soft here
+#     instead of taking init_db() down with it.
+#   * Contentless FTS5 needs the base `questions` table to exist first, so
+#     we run it after SCHEMA.
+FTS5_DDL = [
+    """CREATE VIRTUAL TABLE IF NOT EXISTS questions_fts USING fts5(
+        question_text, option_a, option_b, option_c, option_d, explanation,
+        content='questions', content_rowid='id',
+        tokenize='unicode61 remove_diacritics 2'
+    )""",
+    """CREATE TRIGGER IF NOT EXISTS questions_fts_ai AFTER INSERT ON questions
+       BEGIN
+         INSERT INTO questions_fts(rowid, question_text, option_a, option_b, option_c, option_d, explanation)
+         VALUES (new.id, new.question_text, new.option_a, new.option_b, new.option_c, new.option_d, new.explanation);
+       END""",
+    """CREATE TRIGGER IF NOT EXISTS questions_fts_ad AFTER DELETE ON questions
+       BEGIN
+         INSERT INTO questions_fts(questions_fts, rowid, question_text, option_a, option_b, option_c, option_d, explanation)
+         VALUES ('delete', old.id, old.question_text, old.option_a, old.option_b, old.option_c, old.option_d, old.explanation);
+       END""",
+    """CREATE TRIGGER IF NOT EXISTS questions_fts_au AFTER UPDATE ON questions
+       BEGIN
+         INSERT INTO questions_fts(questions_fts, rowid, question_text, option_a, option_b, option_c, option_d, explanation)
+         VALUES ('delete', old.id, old.question_text, old.option_a, old.option_b, old.option_c, old.option_d, old.explanation);
+         INSERT INTO questions_fts(rowid, question_text, option_a, option_b, option_c, option_d, explanation)
+         VALUES (new.id, new.question_text, new.option_a, new.option_b, new.option_c, new.option_d, new.explanation);
+       END""",
+]
 
 
 def _run_alter_migrations(db):
-    """Idempotent ALTER TABLEs. SQLite raises "duplicate column" on re-run; we swallow it."""
+    """Idempotent ALTER TABLEs. SQLite raises "duplicate column" on re-run; we swallow it.
+
+    Now that turso_patch raises on real Hrana errors, this except no longer masks
+    schema drift. Log every skip so a genuinely broken ALTER still surfaces in
+    Render logs instead of hiding forever.
+    """
     migrations = [
         "ALTER TABLE questions ADD COLUMN disabled INTEGER DEFAULT 0",
         "ALTER TABLE questions ADD COLUMN updated_at TEXT",
+        "ALTER TABLE mock_tests ADD COLUMN test_mode TEXT DEFAULT 'practice'",
+        "ALTER TABLE test_responses ADD COLUMN marked_for_review INTEGER DEFAULT 0",
+        "ALTER TABLE mock_tests ADD COLUMN duration_sec INTEGER",
+        "ALTER TABLE mock_tests ADD COLUMN negative_ratio REAL DEFAULT 0",
+        "ALTER TABLE mock_tests ADD COLUMN raw_marks REAL",
+        "ALTER TABLE mock_tests ADD COLUMN wrong_count INTEGER",
+        "ALTER TABLE mock_tests ADD COLUMN unanswered_count INTEGER",
+        "ALTER TABLE test_responses ADD COLUMN visit_count INTEGER DEFAULT 1",
+        "ALTER TABLE error_log ADD COLUMN sr_box INTEGER DEFAULT 1",
+        "ALTER TABLE error_log ADD COLUMN sr_due_at TEXT",
+        "ALTER TABLE error_log ADD COLUMN sr_last_reviewed TEXT",
     ]
     for sql in migrations:
         try:
             db.execute(sql)
-        except Exception:
-            pass  # column likely already exists
+        except Exception as e:  # noqa: BLE001 — intentionally broad; we log below
+            print(f"[migration skip] {sql}: {e}")
 
 
 def init_db(app):
@@ -141,8 +238,23 @@ def init_db(app):
     db.executescript(SCHEMA)
     _run_alter_migrations(db)
     _seed_default_prompt(db)
+    _run_fts5_setup(db)
     db.commit()
     db.close()
+
+
+def _run_fts5_setup(db):
+    """Create the FTS5 virtual table + triggers if the build supports FTS5.
+
+    Failure is non-fatal: /search falls back to a LIKE scan when the table
+    is absent (see bp_main.py). We log the specific failure so ops can see
+    whether FTS5 is available on this libSQL build.
+    """
+    for sql in FTS5_DDL:
+        try:
+            db.execute(sql)
+        except Exception as e:  # noqa: BLE001
+            print(f"[fts5 skip] {sql.strip().splitlines()[0][:80]}: {e}")
 
 
 DEFAULT_MASTER_PROMPT = """You are an expert exam-question extractor. You will receive one or more PDF pages containing multiple-choice questions (MCQs). Your job is to extract each MCQ into strict JSON.
@@ -184,5 +296,5 @@ def _seed_default_prompt(db):
                 "INSERT INTO master_prompts (name, template, model, is_default) VALUES (?, ?, ?, 1)",
                 ("default", DEFAULT_MASTER_PROMPT, "claude-sonnet-4-6"),
             )
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001 — intentionally broad; we log below
+        print(f"[seed_default_prompt skipped] {e}")

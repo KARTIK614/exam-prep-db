@@ -5,6 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Setup Test — Exam Prep Platform</title>
   <link rel="stylesheet" href="/static/style.css">
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('theme');
+        var theme = saved || (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.dataset.theme = theme;
+      } catch (_e) { document.documentElement.dataset.theme = 'light'; }
+    })();
+  </script>
 </head>
 <body>
   <aside class="sidebar">
@@ -17,9 +26,25 @@
       <a href="/test/setup" class="active"><span class="icon">&#9654;</span> Take Test</a>
       <a href="/analytics"><span class="icon">&#9733;</span> Analytics</a>
       <a href="/errorlog"><span class="icon">&#9888;</span> Error Log</a>
-      <a href="/logout" class="nav-logout" style="margin-top:auto;color:#c04040"><span class="icon">&#8592;</span> Logout</a>
+      <a href="/review"><span class="icon">&#8635;</span> Review</a>
+      <a href="/bookmarks"><span class="icon">&#9733;</span> Bookmarks</a>
+      <a href="/search"><span class="icon">&#128269;</span> Search</a>
+      <a href="/logout" class="nav-logout" style="margin-top:auto"><span class="icon">&#8592;</span> Logout</a>
     </nav>
+    <button type="button" class="theme-toggle-btn" onclick="toggleTheme()" title="Toggle theme" aria-pressed="false">
+      <span class="theme-icon" aria-hidden="true">&#9788;</span>
+      <span class="theme-label">Theme</span>
+    </button>
   </aside>
+
+  <header class="mobile-topbar" role="banner">
+    <a href="/" class="mobile-brand">Exam Platform</a>
+    <div class="mobile-topbar-actions">
+      <button type="button" class="icon-btn" onclick="openSearch()" title="Search">&#128269;</button>
+      <button type="button" class="icon-btn" onclick="toggleTheme()" title="Toggle theme">&#9788;</button>
+      <a class="icon-btn" href="/logout" title="Logout">&#8592;</a>
+    </div>
+  </header>
 
   <div class="main">
     <div class="page-header">
@@ -33,6 +58,35 @@
           <div class="card">
             <div class="card-header">Test Parameters</div>
             <div class="card-body">
+              <div class="form-group">
+                <label>Test Mode</label>
+                <div class="mode-toggle-group" role="radiogroup" aria-label="Test mode">
+                  <label class="mode-toggle">
+                    <input type="radio" name="test_mode" value="practice" id="mode-practice" checked>
+                    <span><strong>Practice</strong><small>Reveal answer + explanation after each question</small></span>
+                  </label>
+                  <label class="mode-toggle">
+                    <input type="radio" name="test_mode" value="exam" id="mode-exam">
+                    <span><strong>Exam</strong><small>No reveal until you finish — closer to the real thing</small></span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="form-group" id="neg-marking-group" style="display:none">
+                <label class="toggle-wrap">
+                  <span>Enable negative marking</span>
+                  <input type="checkbox" name="neg_marking" id="neg-marking-toggle" style="width:auto">
+                </label>
+                <div class="hint">
+                  Penalty per wrong answer:
+                  <input type="number" name="negative_ratio" id="neg-marking-ratio"
+                         min="0" max="1" step="0.01"
+                         value="{{ '%.3f'|format(default_neg_ratio) }}"
+                         style="width:80px;display:inline-block;padding:4px 6px;margin-left:6px" disabled>
+                  &nbsp;(default {{ '%.3f'|format(default_neg_ratio) }} = ⅓; 0.25 = ¼; 0 = disabled)
+                </div>
+              </div>
+
               <div class="form-group">
                 <label>Paper</label>
                 <select name="paper">
@@ -67,6 +121,32 @@
                 </label>
                 <div class="hint">Only include questions from topics where your score is below 60%</div>
               </div>
+
+              <div class="form-group">
+                <label class="toggle-wrap">
+                  <span>PYQ Only (previous-year questions)</span>
+                  <input type="checkbox" name="pyq_only" id="pyq-only-toggle" style="width:auto">
+                </label>
+                <div class="hint">
+                  Restrict the pool to questions tagged with a source exam.
+                  {% if pyq_count %}<strong>{{ pyq_count }}</strong> questions available.{% endif %}
+                </div>
+
+                <div id="pyq-year-range" style="display:none;margin-top:10px">
+                  <label style="font-size:12px">
+                    Year range: <strong id="pyq-year-label">{{ pyq_year_lo }}–{{ pyq_year_hi }}</strong>
+                  </label>
+                  <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
+                    <input type="range" name="pyq_year_min" id="pyq-year-min"
+                           min="{{ pyq_year_lo }}" max="{{ pyq_year_hi }}"
+                           value="{{ pyq_year_lo }}" step="1">
+                    <input type="range" name="pyq_year_max" id="pyq-year-max"
+                           min="{{ pyq_year_lo }}" max="{{ pyq_year_hi }}"
+                           value="{{ pyq_year_hi }}" step="1">
+                  </div>
+                  <div class="hint">Drag the two sliders to bracket the year range.</div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -90,7 +170,8 @@
                   <div class="checkbox-grid">
                 {% endif %}
                 <label class="checkbox-item">
-                  <input type="checkbox" name="topics" value="{{ t.id }}">
+                  <input type="checkbox" name="topics" value="{{ t.id }}"
+                         {% if prefill_topic_ids and t.id in prefill_topic_ids %}checked{% endif %}>
                   <span>{{ t.name }}</span>
                 </label>
               {% endfor %}
@@ -115,6 +196,71 @@
       document.querySelectorAll('input[name="topics"]').forEach(cb => cb.checked = false);
       return false;
     }
+
+    // PYQ year range slider — show only when PYQ-only is on. Keep min<=max as
+    // the user drags either handle.
+    (function () {
+      const toggle = document.getElementById('pyq-only-toggle');
+      const wrap = document.getElementById('pyq-year-range');
+      const lo = document.getElementById('pyq-year-min');
+      const hi = document.getElementById('pyq-year-max');
+      const label = document.getElementById('pyq-year-label');
+      if (!toggle || !wrap || !lo || !hi) return;
+
+      function updateLabel() {
+        label.textContent = lo.value + '–' + hi.value;
+      }
+      function clampMin() {
+        if (parseInt(lo.value, 10) > parseInt(hi.value, 10)) hi.value = lo.value;
+        updateLabel();
+      }
+      function clampMax() {
+        if (parseInt(hi.value, 10) < parseInt(lo.value, 10)) lo.value = hi.value;
+        updateLabel();
+      }
+      toggle.addEventListener('change', () => {
+        wrap.style.display = toggle.checked ? 'block' : 'none';
+      });
+      lo.addEventListener('input', clampMin);
+      hi.addEventListener('input', clampMax);
+    })();
+
+    // Negative-marking group — only visible when Exam Mode is picked. Ratio
+    // input is disabled unless the checkbox is on so the "0.333 by default"
+    // hint reads as a preview rather than an active value.
+    (function () {
+      const modePractice = document.getElementById('mode-practice');
+      const modeExam = document.getElementById('mode-exam');
+      const group = document.getElementById('neg-marking-group');
+      const chk = document.getElementById('neg-marking-toggle');
+      const ratio = document.getElementById('neg-marking-ratio');
+      if (!modePractice || !modeExam || !group || !chk || !ratio) return;
+
+      function syncMode() {
+        const isExam = modeExam.checked;
+        group.style.display = isExam ? 'block' : 'none';
+        if (!isExam) {
+          chk.checked = false;
+          ratio.disabled = true;
+        }
+      }
+      function syncChk() {
+        ratio.disabled = !chk.checked;
+      }
+      modePractice.addEventListener('change', syncMode);
+      modeExam.addEventListener('change', syncMode);
+      chk.addEventListener('change', syncChk);
+      syncMode();
+      syncChk();
+    })();
   </script>
+
+  <nav class="mobile-bottomnav" role="navigation">
+    <a href="/"><span class="icon">&#9632;</span> Dash</a>
+    <a href="/test/setup" class="active"><span class="icon">&#9654;</span> Test</a>
+    <a href="/analytics"><span class="icon">&#9733;</span> Stats</a>
+    <a href="/errorlog"><span class="icon">&#9888;</span> Errs</a>
+    <a href="/search"><span class="icon">&#128269;</span> Find</a>
+  </nav>
 </body>
 </html>

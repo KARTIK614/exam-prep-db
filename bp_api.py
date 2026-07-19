@@ -7,7 +7,15 @@ from db import get_db
 
 bp = Blueprint("api", __name__)
 
-FLAG_CATEGORIES = {"data_inconsistency", "bad_latex", "typo", "wrong_answer", "other"}
+FLAG_CATEGORIES = {
+    "wrong_answer",         # answer key is wrong
+    "ambiguous",            # multiple correct or no correct
+    "typo_question",        # typo in question stem
+    "typo_options",         # typo in options
+    "explanation_missing",  # explanation empty/wrong
+    "duplicate",            # this Q already exists
+    "other",                # freeform reason in note
+}
 
 
 @bp.route("/flag_question", methods=["POST"])
@@ -15,14 +23,16 @@ def flag_question():
     """Report an issue with a question during a test. Doesn't affect scoring."""
     data = request.json or {}
     question_id = data.get("question_id")
-    category = data.get("category", "other")
+    category = data.get("category")
     note = (data.get("note") or "").strip()[:1000]
     test_id = data.get("test_id") or session.get("test_id")
 
     if not question_id:
         return jsonify({"error": "question_id is required"}), 400
-    if category not in FLAG_CATEGORIES:
-        category = "other"
+    if not category or category not in FLAG_CATEGORIES:
+        return jsonify({"error": f"category must be one of {sorted(FLAG_CATEGORIES)}"}), 400
+    if category == "other" and not note:
+        return jsonify({"error": "note is required when category is 'other'"}), 400
 
     db = get_db()
     db.execute(
@@ -48,14 +58,56 @@ def get_question(idx):
     q = session["questions"][idx]
     session["current_q"] = idx
     session["q_start_time"] = time.time()
+
+    # Track visit_count for post-hoc analytics of flip-flopping.
+    responses = session.setdefault("responses", {})
+    key = str(idx)
+    if key in responses:
+        responses[key]["visit_count"] = int(responses[key].get("visit_count", 1) or 1) + 1
     session.modified = True
+
+    # Cheap single-row bookmark lookup — the unique index makes this O(log n).
+    bookmarked = False
+    try:
+        row = get_db().execute(
+            "SELECT 1 FROM bookmarks WHERE question_id = ? LIMIT 1", (q["id"],)
+        ).fetchone()
+        bookmarked = row is not None
+    except Exception:  # noqa: BLE001 — bookmarks table may not exist in dev DBs
+        pass
+
+    review_marks = session.get("review_marks", {}) or {}
     return jsonify({
         "id": q["id"], "text": q["question_text"],
         "options": [q["option_a"], q["option_b"], q["option_c"], q["option_d"]],
         "index": idx, "total": len(session["questions"]),
         "topic": q.get("topic_name", ""),
         "difficulty": q.get("difficulty", "medium"),
+        "bookmarked": bookmarked,
+        "marked_for_review": bool(review_marks.get(key)),
+        "test_mode": session.get("test_mode", "practice"),
     })
+
+
+@bp.route("/mark_for_review", methods=["POST"])
+def mark_for_review():
+    """Toggle the marked-for-review flag on the current question. Stored in
+    session until /test/finish flushes it to the test_responses row."""
+    if "questions" not in session:
+        return jsonify({"error": "No active test"}), 400
+    data = request.json or {}
+    try:
+        idx = int(data.get("question_index", session.get("current_q", 0)))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Invalid question_index"}), 400
+    if idx < 0 or idx >= len(session["questions"]):
+        return jsonify({"error": "Invalid question_index"}), 400
+
+    marks = session.setdefault("review_marks", {})
+    key = str(idx)
+    marks[key] = not marks.get(key, False)
+    session.modified = True
+    return jsonify({"marked": bool(marks[key]), "question_index": idx})
 
 
 @bp.route("/submit_answer", methods=["POST"])
@@ -122,6 +174,25 @@ def update_settings():
         db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)", (k, str(v)))
     db.commit()
     return jsonify({"status": "ok"})
+
+
+@bp.route("/bookmark/<int:qid>", methods=["POST"])
+def toggle_bookmark(qid):
+    """Idempotent bookmark toggle. Returns {"bookmarked": bool}."""
+    db = get_db()
+    existing = db.execute(
+        "SELECT id FROM bookmarks WHERE question_id = ?", (qid,)
+    ).fetchone()
+    if existing:
+        db.execute("DELETE FROM bookmarks WHERE question_id = ?", (qid,))
+        db.commit()
+        return jsonify({"status": "removed", "bookmarked": False})
+    db.execute(
+        "INSERT INTO bookmarks (question_id, created_at) VALUES (?, ?)",
+        (qid, datetime.utcnow().isoformat()),
+    )
+    db.commit()
+    return jsonify({"status": "added", "bookmarked": True})
 
 
 @bp.route("/study_session", methods=["POST"])

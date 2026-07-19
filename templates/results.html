@@ -6,6 +6,15 @@
   <title>Results — Test #{{ test.id }} — Exam Prep Platform</title>
   <link rel="stylesheet" href="/static/style.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('theme');
+        var theme = saved || (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.dataset.theme = theme;
+      } catch (_e) { document.documentElement.dataset.theme = 'light'; }
+    })();
+  </script>
 </head>
 <body>
   <aside class="sidebar">
@@ -18,22 +27,69 @@
       <a href="/test/setup"><span class="icon">&#9654;</span> Take Test</a>
       <a href="/analytics"><span class="icon">&#9733;</span> Analytics</a>
       <a href="/errorlog"><span class="icon">&#9888;</span> Error Log</a>
-      <a href="/logout" class="nav-logout" style="margin-top:auto;color:#c04040"><span class="icon">&#8592;</span> Logout</a>
+      <a href="/review"><span class="icon">&#8635;</span> Review</a>
+      <a href="/bookmarks"><span class="icon">&#9733;</span> Bookmarks</a>
+      <a href="/search"><span class="icon">&#128269;</span> Search</a>
+      <a href="/logout" class="nav-logout" style="margin-top:auto"><span class="icon">&#8592;</span> Logout</a>
     </nav>
+    <button type="button" class="theme-toggle-btn" onclick="toggleTheme()" title="Toggle theme" aria-pressed="false">
+      <span class="theme-icon" aria-hidden="true">&#9788;</span>
+      <span class="theme-label">Theme</span>
+    </button>
   </aside>
+
+  <header class="mobile-topbar" role="banner">
+    <a href="/" class="mobile-brand">Exam Platform</a>
+    <div class="mobile-topbar-actions">
+      <button type="button" class="icon-btn" onclick="openSearch()" title="Search">&#128269;</button>
+      <button type="button" class="icon-btn" onclick="toggleTheme()" title="Toggle theme">&#9788;</button>
+      <a class="icon-btn" href="/logout" title="Logout">&#8592;</a>
+    </div>
+  </header>
 
   <div class="main">
     <div class="page-header">
       <div class="flex-between">
         <div>
           <h2>Test #{{ test.id }} Results</h2>
-          <p>{{ test.paper }} &middot; {{ test.total_questions }} Questions &middot; {{ (test.time_taken_sec or 0) // 60 }} min {{ (test.time_taken_sec or 0) % 60 }} sec</p>
+          {% set _test_mode = test['test_mode'] if 'test_mode' in test.keys() else '' %}
+          {% set _neg_ratio_hdr = (test['negative_ratio'] if 'negative_ratio' in test.keys() else 0) or 0 %}
+          <p>
+            {{ test.paper }} &middot; {{ test.total_questions }} Questions &middot;
+            {{ (test.time_taken_sec or 0) // 60 }} min {{ (test.time_taken_sec or 0) % 60 }} sec
+            {% if _test_mode %} &middot; {{ _test_mode|capitalize }} mode{% endif %}
+            {% if _neg_ratio_hdr > 0 %}
+              &middot; Neg marking: {{ '%.3f'|format(_neg_ratio_hdr) }}
+            {% endif %}
+          </p>
         </div>
-        <a href="/test/setup" class="btn btn-primary">Take Another Test</a>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-outline no-print" onclick="window.print()" title="Print or save to PDF (Ctrl-P)">
+            &#128424; Print
+          </button>
+          <a href="/test/setup" class="btn btn-primary">Take Another Test</a>
+        </div>
       </div>
     </div>
 
     <div class="content">
+      {# Break the responses into correct / wrong (attempted-but-incorrect) /
+         unanswered. `test.wrong_count` + `test.unanswered_count` come from the
+         Phase-4 columns; when the row was written before neg-marking landed
+         they'll be NULL, in which case we recount from `responses`. #}
+      {% set correct_count = responses|selectattr('is_correct','equalto',1)|list|length %}
+      {% set stored_wrong = test['wrong_count'] if 'wrong_count' in test.keys() else none %}
+      {% set stored_unanswered = test['unanswered_count'] if 'unanswered_count' in test.keys() else none %}
+      {% set stored_raw = test['raw_marks'] if 'raw_marks' in test.keys() else none %}
+      {% set stored_neg = test['negative_ratio'] if 'negative_ratio' in test.keys() else none %}
+      {% set wrong_count = stored_wrong if stored_wrong is not none
+         else (responses|selectattr('selected_option')|rejectattr('is_correct','equalto',1)|list|length) %}
+      {% set unanswered_count = stored_unanswered if stored_unanswered is not none
+         else ((test.total_questions or responses|length) - correct_count - wrong_count) %}
+      {% set neg_ratio = stored_neg or 0 %}
+      {% set raw_marks = stored_raw if stored_raw is not none
+         else (correct_count - wrong_count * neg_ratio) %}
+
       <!-- Score Overview -->
       <div class="stat-grid">
         <div class="stat-card {{ 'success' if (test.score or 0) >= 60 else 'danger' }}">
@@ -41,16 +97,51 @@
           <div class="stat-label">Overall Score</div>
         </div>
         <div class="stat-card success">
-          <div class="stat-value">{{ responses|selectattr('is_correct', 'equalto', 1)|list|length }}</div>
+          <div class="stat-value">{{ correct_count }}</div>
           <div class="stat-label">Correct</div>
         </div>
         <div class="stat-card danger">
-          <div class="stat-value">{{ responses|rejectattr('is_correct', 'equalto', 1)|list|length }}</div>
-          <div class="stat-label">Incorrect</div>
+          <div class="stat-value">{{ wrong_count }}</div>
+          <div class="stat-label">Wrong</div>
         </div>
+        <div class="stat-card">
+          <div class="stat-value">{{ unanswered_count }}</div>
+          <div class="stat-label">Unanswered</div>
+        </div>
+      </div>
+
+      {# Negative-marking breakdown — only visible if this test actually used it. #}
+      {% if neg_ratio > 0 %}
+      <div class="card mt-4 print-breakdown">
+        <div class="card-header">Score Breakdown (with negative marking)</div>
+        <div class="card-body" style="font-size:15px;line-height:1.8">
+          <div>
+            <strong style="color:var(--success)">{{ correct_count }} correct</strong>
+            &nbsp;&minus;&nbsp;
+            <strong style="color:var(--danger)">{{ wrong_count }} wrong &times; {{ "%.3f"|format(neg_ratio) }}</strong>
+            &nbsp;=&nbsp;
+            <strong style="font-size:20px">{{ "%.2f"|format(raw_marks) }}</strong>
+            / {{ test.total_questions }}
+            &nbsp;({{ "%.1f"|format(test.score or 0) }}%)
+          </div>
+          <div style="font-size:13px;color:var(--text-muted);margin-top:6px">
+            Penalty applied per wrong answer:
+            {{ "%.3f"|format(neg_ratio) }}
+            {% if neg_ratio == 0.333333 %} (⅓ — BCI standard){% endif %}.
+            Unanswered questions ({{ unanswered_count }}) carry no penalty.
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+      <div class="stat-grid" style="margin-top:16px">
         <div class="stat-card">
           <div class="stat-value">{{ "%.1f"|format(avg_time) }}s</div>
           <div class="stat-label">Avg Time / Question</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">{{ "%.2f"|format(raw_marks) }}</div>
+          <div class="stat-label">Raw Marks / {{ test.total_questions }}</div>
         </div>
       </div>
 
@@ -361,5 +452,13 @@
     });
     {% endif %}
   </script>
+
+  <nav class="mobile-bottomnav no-print" role="navigation">
+    <a href="/"><span class="icon">&#9632;</span> Dash</a>
+    <a href="/test/setup"><span class="icon">&#9654;</span> Test</a>
+    <a href="/analytics"><span class="icon">&#9733;</span> Stats</a>
+    <a href="/errorlog"><span class="icon">&#9888;</span> Errs</a>
+    <a href="/search"><span class="icon">&#128269;</span> Find</a>
+  </nav>
 </body>
 </html>

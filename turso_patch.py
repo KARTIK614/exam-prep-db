@@ -77,7 +77,16 @@ def _build_stmt(sql, params):
 
 
 def _post(requests_list, timeout=30):
-    """POST a list of Hrana requests. Raise if HTTP failed or Hrana returned an error."""
+    """POST a list of Hrana requests. Raise if HTTP failed or Hrana returned a per-request error.
+
+    Hrana v2 pipeline replies with HTTP 200 even when individual statements fail —
+    each entry in `results` is either {"type": "ok", "response": {...}} or
+    {"type": "error", "error": {"message": ..., "code": ...}}. Historically we
+    only raised on HTTP non-2xx, so schema errors (bad column, missing table)
+    silently produced empty cursors with lastrowid=None. Now we inspect every
+    entry and raise sqlite3.OperationalError on the first failure, including
+    the failing SQL when we can identify it from `requests_list`.
+    """
     r = requests.post(
         REST,
         headers={"Authorization": "Bearer " + TURSO_AUTH, "Content-Type": "application/json"},
@@ -85,13 +94,36 @@ def _post(requests_list, timeout=30):
         timeout=timeout,
     )
     r.raise_for_status()
-    return r.json()
+    payload = r.json()
+    results = payload.get("results", []) or []
+    for idx, entry in enumerate(results):
+        if entry.get("type") == "error":
+            err = entry.get("error", {}) or {}
+            msg = err.get("message", "unknown Turso/Hrana error")
+            code = err.get("code", "")
+            # Best-effort: pull the SQL out of the matching request so the
+            # traceback names the failing statement.
+            sql_ctx = ""
+            try:
+                sql_ctx = requests_list[idx].get("stmt", {}).get("sql", "")
+            except (IndexError, AttributeError, TypeError):
+                pass
+            detail = f"Turso: {msg}"
+            if code:
+                detail += f" [code={code}]"
+            if sql_ctx:
+                detail += f" | sql={sql_ctx[:200]}"
+            raise sqlite3.OperationalError(detail)
+    return payload
 
 
 class TC:
     """Cursor-like object holding the parsed rows of one Hrana `execute` response."""
 
     def __init__(self, result_envelope):
+        # Error entries are already raised in _post — by the time we get here
+        # the envelope is either an OK execute response or an empty sentinel
+        # (executemany calls TC({}) after the underlying POSTs succeeded).
         resp = result_envelope.get("response", {}) or {}
         restype = resp.get("type", "")
         self._rows = []
@@ -100,10 +132,6 @@ class TC:
         self.lastrowid = None
         self._idx = 0
         self.arraysize = 1
-
-        if resp.get("type") == "" and "error" in result_envelope:
-            err = result_envelope["error"]
-            raise sqlite3.DatabaseError(f"Turso error: {err}")
 
         if restype == "execute":
             res = resp.get("result", {}) or {}
@@ -164,9 +192,18 @@ class TR:
         if not rows:
             return TC({})
         reqs = [{"type": "execute", "stmt": _build_stmt(sql, r)} for r in rows]
-        # Send in chunks of 50 to stay under Turso payload limits.
+        # Send in chunks of 50 to stay under Turso payload limits. Any chunk
+        # that fails raises inside _post — we let it propagate. Keep the last
+        # successful chunk's final envelope so the returned cursor reflects
+        # last_insert_rowid of the tail row (matches sqlite3 semantics for
+        # executemany more closely than the previous empty-TC sentinel).
+        last_payload = None
         for i in range(0, len(reqs), 50):
-            _post(reqs[i:i + 50], timeout=60)
+            last_payload = _post(reqs[i:i + 50], timeout=60)
+        if last_payload:
+            tail_results = last_payload.get("results", []) or []
+            if tail_results:
+                return TC(tail_results[-1])
         return TC({})
 
     def executescript(self, script):

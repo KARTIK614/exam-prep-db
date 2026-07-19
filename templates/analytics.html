@@ -6,6 +6,15 @@
   <title>Analytics — Exam Prep Platform</title>
   <link rel="stylesheet" href="/static/style.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('theme');
+        var theme = saved || (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.dataset.theme = theme;
+      } catch (_e) { document.documentElement.dataset.theme = 'light'; }
+    })();
+  </script>
 </head>
 <body>
   <aside class="sidebar">
@@ -18,9 +27,25 @@
       <a href="/test/setup"><span class="icon">&#9654;</span> Take Test</a>
       <a href="/analytics" class="active"><span class="icon">&#9733;</span> Analytics</a>
       <a href="/errorlog"><span class="icon">&#9888;</span> Error Log</a>
-      <a href="/logout" class="nav-logout" style="margin-top:auto;color:#c04040"><span class="icon">&#8592;</span> Logout</a>
+      <a href="/review"><span class="icon">&#8635;</span> Review</a>
+      <a href="/bookmarks"><span class="icon">&#9733;</span> Bookmarks</a>
+      <a href="/search"><span class="icon">&#128269;</span> Search</a>
+      <a href="/logout" class="nav-logout" style="margin-top:auto"><span class="icon">&#8592;</span> Logout</a>
     </nav>
+    <button type="button" class="theme-toggle-btn" onclick="toggleTheme()" title="Toggle theme" aria-pressed="false">
+      <span class="theme-icon" aria-hidden="true">&#9788;</span>
+      <span class="theme-label">Theme</span>
+    </button>
   </aside>
+
+  <header class="mobile-topbar" role="banner">
+    <a href="/" class="mobile-brand">Exam Platform</a>
+    <div class="mobile-topbar-actions">
+      <button type="button" class="icon-btn" onclick="openSearch()" title="Search">&#128269;</button>
+      <button type="button" class="icon-btn" onclick="toggleTheme()" title="Toggle theme">&#9788;</button>
+      <a class="icon-btn" href="/logout" title="Logout">&#8592;</a>
+    </div>
+  </header>
 
   <div class="main">
     <div class="page-header">
@@ -29,6 +54,193 @@
     </div>
 
     <div class="content">
+      <!-- ─── Mastery Grid (Plan C F1, by paper) ─────────────────────── -->
+      <div class="card mb-4">
+        <div class="card-header">Mastery Grid</div>
+        <div class="card-body">
+          {% for p in paper_keys %}
+            <h3 class="mastery-paper-heading">Paper {{ p }}</h3>
+            <div class="mastery-grid">
+              {% for t in tiles_by_paper[p] %}
+                <div class="topic-tile tier-{{ t.tier }}">
+                  <div class="tile-top">
+                    <div class="tile-name">{{ t.name }}</div>
+                    <span class="weight-badge">{{ t.weightage }}</span>
+                  </div>
+                  {% if t.tier == 'untested' %}
+                    <div class="score-bar"><div class="score-bar-fill" style="width:0%;background:var(--border)"></div></div>
+                    <div class="tile-meta">untested</div>
+                  {% else %}
+                    {% set s = t.current_score or 0 %}
+                    <div class="score-bar">
+                      <div class="score-bar-fill" style="width:{{ s }}%;background:
+                        {% if t.tier == 'weak' %}var(--danger)
+                        {% elif t.tier == 'on_track' %}var(--warning)
+                        {% else %}var(--success){% endif %}"></div>
+                    </div>
+                    <div class="tile-meta">
+                      <span style="font-weight:600">{{ "%.0f"|format(s) }}%</span>
+                      &middot; {{ t.test_count }} test{{ '' if t.test_count == 1 else 's' }}
+                      {% if t.days_since is not none %}&middot; {{ t.days_since }}d ago{% endif %}
+                    </div>
+                  {% endif %}
+                </div>
+              {% endfor %}
+            </div>
+          {% endfor %}
+          <div class="mastery-legend">
+            <span class="mastery-legend-item"><span class="legend-swatch" style="background:var(--danger)"></span>weak &lt;{{ weak_threshold }}%</span>
+            <span class="mastery-legend-item"><span class="legend-swatch" style="background:var(--warning)"></span>on-track</span>
+            <span class="mastery-legend-item"><span class="legend-swatch" style="background:var(--success)"></span>mastered &ge;{{ target_score }}%</span>
+            <span class="mastery-legend-item"><span class="legend-swatch" style="background:var(--border)"></span>untested</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── Weakness Heatmap (Plan A F2) ─────────────────────────── -->
+      <div class="card mb-4">
+        <div class="card-header">
+          Weakness Heatmap
+          <div class="segmented-toggle" role="tablist">
+            <button type="button" class="seg-btn active" data-tab="diff">By Difficulty</button>
+            <button type="button" class="seg-btn" data-tab="recency">By Recency</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="heatmap-panel" id="hm-diff">
+            {% if heatmap_diff %}
+              <div class="heatmap-2d heatmap-diff">
+                <div class="hm-th hm-th-label">Topic (weight)</div>
+                <div class="hm-th">Easy</div>
+                <div class="hm-th">Medium</div>
+                <div class="hm-th">Hard</div>
+                {% for row in heatmap_diff %}
+                  <div class="hm-label">{{ row.name }} <span class="weight-badge">{{ row.weightage }}</span></div>
+                  {% for diff in ['easy', 'medium', 'hard'] %}
+                    {% set cell = row.cells[diff] %}
+                    {% if cell %}
+                      {% set acc = cell.accuracy %}
+                      {% if acc < 50 %}{% set cls = 'acc-red' %}
+                      {% elif acc < 75 %}{% set cls = 'acc-amber' %}
+                      {% else %}{% set cls = 'acc-green' %}{% endif %}
+                      <div class="hm-cell {{ cls }}"
+                           title="{{ row.name }} / {{ diff }}: {{ cell.correct }}/{{ cell.attempted }} = {{ acc }}%">
+                        {{ "%.0f"|format(acc) }}%
+                        <span class="hm-cell-n">{{ cell.attempted }}</span>
+                      </div>
+                    {% else %}
+                      <div class="hm-cell acc-empty" title="No attempts">&mdash;</div>
+                    {% endif %}
+                  {% endfor %}
+                {% endfor %}
+              </div>
+            {% else %}
+              <div class="empty-state"><p>No difficulty data yet. Take a test to populate the heatmap.</p></div>
+            {% endif %}
+          </div>
+
+          <div class="heatmap-panel" id="hm-recency" style="display:none">
+            {% if heatmap_recency %}
+              <div class="heatmap-2d heatmap-recency">
+                <div class="hm-th hm-th-label">Topic (weight)</div>
+                <div class="hm-th">0-7d</div>
+                <div class="hm-th">8-14d</div>
+                <div class="hm-th">15-30d</div>
+                <div class="hm-th">30+d</div>
+                {% for row in heatmap_recency %}
+                  <div class="hm-label">{{ row.name }} <span class="weight-badge">{{ row.weightage }}</span></div>
+                  {% for b in ['0-7', '8-14', '15-30', '30+'] %}
+                    {% set cell = row.cells[b] %}
+                    {% if cell %}
+                      {% set acc = cell.accuracy %}
+                      {% if acc < 50 %}{% set cls = 'acc-red' %}
+                      {% elif acc < 75 %}{% set cls = 'acc-amber' %}
+                      {% else %}{% set cls = 'acc-green' %}{% endif %}
+                      <div class="hm-cell {{ cls }}"
+                           title="{{ row.name }} / {{ b }}d: {{ cell.correct }}/{{ cell.attempted }} = {{ acc }}%">
+                        {{ "%.0f"|format(acc) }}%
+                        <span class="hm-cell-n">{{ cell.attempted }}</span>
+                      </div>
+                    {% else %}
+                      <div class="hm-cell acc-empty" title="No attempts">&mdash;</div>
+                    {% endif %}
+                  {% endfor %}
+                {% endfor %}
+              </div>
+            {% else %}
+              <div class="empty-state"><p>No recency data yet.</p></div>
+            {% endif %}
+          </div>
+
+          <div class="mastery-legend" style="margin-top:12px">
+            <span class="mastery-legend-item"><span class="legend-swatch" style="background:var(--danger)"></span>&lt;50%</span>
+            <span class="mastery-legend-item"><span class="legend-swatch" style="background:var(--warning)"></span>50-74%</span>
+            <span class="mastery-legend-item"><span class="legend-swatch" style="background:var(--success)"></span>&ge;75%</span>
+            <span class="mastery-legend-item"><span class="legend-swatch" style="background:var(--border)"></span>untested</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── Pacing (Plan C F4) ───────────────────────────────────── -->
+      <div class="card mb-4">
+        <div class="card-header">
+          Pacing
+          <span class="badge badge-muted">target {{ target_sec }}s/Q</span>
+        </div>
+        <div class="card-body">
+          {% if time_trend %}
+            <div class="chart-container"><canvas id="paceChart" height="120"></canvas></div>
+            <div class="pace-by-diff">
+              <h4 class="pace-heading">Pacing by Difficulty</h4>
+              {% if pace_diff %}
+                {% for row in pace_diff %}
+                  {% set t = target_sec if row.difficulty == 'medium' else (target_sec - 22 if row.difficulty == 'easy' else target_sec + 28) %}
+                  {% set pct = ((row.avg_time or 0) / (t or 1) * 100) %}
+                  {% if pct > 120 %}{% set cls = 'pace-red' %}
+                  {% elif pct > 100 %}{% set cls = 'pace-amber' %}
+                  {% else %}{% set cls = 'pace-green' %}{% endif %}
+                  <div class="pace-row">
+                    <div class="pace-label">{{ row.difficulty|capitalize }}</div>
+                    <div class="pace-bar-wrap">
+                      <div class="pace-bar {{ cls }}" style="width:{{ [pct, 200]|min }}%"></div>
+                    </div>
+                    <div class="pace-val">{{ "%.0f"|format(row.avg_time or 0) }}s
+                      <span class="pace-target">/ target {{ t }}s</span>
+                      <span class="pace-n">n={{ row.n }}</span>
+                    </div>
+                  </div>
+                {% endfor %}
+              {% else %}
+                <p class="empty-state">No difficulty pacing data yet.</p>
+              {% endif %}
+            </div>
+
+            {% if slow_wrong %}
+              <h4 class="pace-heading">Slow &amp; Wrong (top {{ slow_wrong|length }})</h4>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>Topic</th><th>Difficulty</th><th>Time</th><th>Question preview</th></tr>
+                  </thead>
+                  <tbody>
+                    {% for sw in slow_wrong %}
+                    <tr>
+                      <td>{{ sw.topic }}</td>
+                      <td><span class="badge badge-muted">{{ sw.difficulty or 'medium' }}</span></td>
+                      <td><strong>{{ "%.0f"|format(sw.time_spent_sec or 0) }}s</strong></td>
+                      <td class="truncate" style="max-width:340px">{{ (sw.question_text or '')[:120] }}...</td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            {% endif %}
+          {% else %}
+            <div class="empty-state"><p>No timing data yet.</p></div>
+          {% endif %}
+        </div>
+      </div>
+
       <!-- Progress Over Time -->
       <div class="card mb-4">
         <div class="card-header">Score Progress</div>
@@ -41,39 +253,15 @@
         </div>
       </div>
 
-      <!-- Topic Mastery Radar + Paper Comparison -->
+      <!-- Paper Comparison + Accuracy by Difficulty -->
       <div class="chart-row">
-        <div class="card">
-          <div class="card-header">Topic Mastery Overview</div>
-          <div class="card-body">
-            {% if topics_data %}
-              <div class="chart-container"><canvas id="masteryChart" height="250"></canvas></div>
-            {% else %}
-              <div class="empty-state"><p>No topic data yet.</p></div>
-            {% endif %}
-          </div>
-        </div>
         <div class="card">
           <div class="card-header">Paper-wise Comparison (Last 5 Tests)</div>
           <div class="card-body">
             {% if paper1 or paper2 %}
-              <div class="chart-container"><canvas id="paperChart" height="250"></canvas></div>
+              <div class="chart-container"><canvas id="paperChart" height="200"></canvas></div>
             {% else %}
               <div class="empty-state"><p>Complete tests from both papers to compare.</p></div>
-            {% endif %}
-          </div>
-        </div>
-      </div>
-
-      <!-- Time-per-Question Trend + Error Trends -->
-      <div class="chart-row">
-        <div class="card">
-          <div class="card-header">Time-per-Question Trend</div>
-          <div class="card-body">
-            {% if time_trend %}
-              <div class="chart-container"><canvas id="timeTrendChart" height="200"></canvas></div>
-            {% else %}
-              <div class="empty-state"><p>No timing data yet.</p></div>
             {% endif %}
           </div>
         </div>
@@ -126,6 +314,10 @@
               <label>Weakness Threshold (%)</label>
               <input type="number" id="setting-threshold" value="{{ settings.weakness_threshold or '60' }}" min="30" max="90">
             </div>
+            <div class="form-group">
+              <label>Target seconds / question</label>
+              <input type="number" id="setting-target-sec" value="{{ settings.target_seconds_per_q or '72' }}" min="20" max="200">
+            </div>
             <div style="display:flex;align-items:flex-end">
               <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
               <span id="settings-saved" style="margin-left:12px;color:var(--success);display:none">&#10003; Saved</span>
@@ -138,6 +330,23 @@
 
   <script src="/static/script.js"></script>
   <script>
+    // ─── Heatmap toggle ───────────────────────────────
+    (function() {
+      const btns = document.querySelectorAll('.segmented-toggle .seg-btn');
+      const panels = {
+        diff: document.getElementById('hm-diff'),
+        recency: document.getElementById('hm-recency'),
+      };
+      btns.forEach(b => b.addEventListener('click', () => {
+        btns.forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        const which = b.dataset.tab;
+        Object.keys(panels).forEach(k => {
+          if (panels[k]) panels[k].style.display = (k === which) ? '' : 'none';
+        });
+      }));
+    })();
+
     // ─── Progress Chart ───────────────────────────────
     {% if progress %}
     (function() {
@@ -170,42 +379,7 @@
           responsive: true,
           scales: {
             y: { min: 0, max: 100, ticks: { callback: v => v + '%' } }
-          },
-          plugins: {
-            annotation: {
-              annotations: {
-                targetLine: { type: 'line', yMin: {{ settings.target_score or 75 }}, yMax: {{ settings.target_score or 75 }}, borderColor: '#059669', borderDash: [5,5], borderWidth: 2 }
-              }
-            }
           }
-        }
-      });
-    })();
-    {% endif %}
-
-    // ─── Topic Mastery Bar Chart ──────────────────────
-    {% if topics_data %}
-    (function() {
-      const data = {{ topics_data|tojson }};
-      new Chart(document.getElementById('masteryChart'), {
-        type: 'bar',
-        data: {
-          labels: data.map(d => d.name),
-          datasets: [{
-            label: 'Mastery Score (%)',
-            data: data.map(d => d.current_score || 0),
-            backgroundColor: data.map(d => {
-              const s = d.current_score || 0;
-              return s >= 70 ? '#059669' : s >= 50 ? '#2563eb' : s > 0 ? '#d97706' : '#d1d5db';
-            }),
-            borderRadius: 4
-          }]
-        },
-        options: {
-          responsive: true,
-          indexAxis: 'y',
-          scales: { x: { min: 0, max: 100, ticks: { callback: v => v + '%' } } },
-          plugins: { legend: { display: false } }
         }
       });
     })();
@@ -223,20 +397,10 @@
         data: {
           labels: labels.slice(0, Math.max(p1.length, p2.length)),
           datasets: [
-            {
-              label: 'Paper I',
-              data: p1.map(d => d.score).reverse(),
-              borderColor: '#2563eb',
-              tension: 0.3,
-              spanGaps: true
-            },
-            {
-              label: 'Paper II',
-              data: p2.map(d => d.score).reverse(),
-              borderColor: '#d97706',
-              tension: 0.3,
-              spanGaps: true
-            }
+            { label: 'Paper I',  data: p1.map(d => d.score).reverse(),
+              borderColor: '#2563eb', tension: 0.3, spanGaps: true },
+            { label: 'Paper II', data: p2.map(d => d.score).reverse(),
+              borderColor: '#d97706', tension: 0.3, spanGaps: true }
           ]
         },
         options: {
@@ -247,23 +411,51 @@
     })();
     {% endif %}
 
-    // ─── Time Trend Chart ─────────────────────────────
+    // ─── Pace Chart (target line + moving avg) ───────
     {% if time_trend %}
     (function() {
       const data = {{ time_trend|tojson }};
-      new Chart(document.getElementById('timeTrendChart'), {
+      const ma = {{ ma_pace|tojson }};
+      const target = {{ target_sec }};
+      const labels = data.map((d, i) => 'T' + (i + 1) + (d.d ? ' · ' + d.d.slice(5) : ''));
+
+      new Chart(document.getElementById('paceChart'), {
         type: 'line',
         data: {
-          labels: data.map(d => 'Test #' + d.id),
-          datasets: [{
-            label: 'Avg Time per Question (s)',
-            data: data.map(d => d.avg_time),
-            borderColor: '#d97706',
-            tension: 0.3
-          }]
+          labels: labels,
+          datasets: [
+            {
+              label: 'Avg time / Q (s)',
+              data: data.map(d => d.avg_time),
+              borderColor: '#d97706',
+              backgroundColor: 'rgba(217,119,6,0.1)',
+              tension: 0.3,
+              pointRadius: 4,
+              fill: false
+            },
+            {
+              label: '5-test moving avg',
+              data: ma,
+              borderColor: '#2563eb',
+              borderDash: [4, 4],
+              tension: 0.3,
+              pointRadius: 0,
+              fill: false
+            },
+            {
+              label: 'Target (' + target + 's)',
+              data: data.map(() => target),
+              borderColor: '#059669',
+              borderDash: [6, 6],
+              tension: 0,
+              pointRadius: 0,
+              fill: false
+            }
+          ]
         },
         options: {
           responsive: true,
+          scales: { y: { beginAtZero: true, ticks: { callback: v => v + 's' } } },
           plugins: { legend: { display: true } }
         }
       });
@@ -294,14 +486,17 @@
 
     // ─── Settings ─────────────────────────────────────
     async function saveSettings() {
+      const body = {
+        target_score: document.getElementById('setting-target').value,
+        accuracy_focus: document.getElementById('setting-accuracy').value,
+        weakness_threshold: document.getElementById('setting-threshold').value
+      };
+      const secEl = document.getElementById('setting-target-sec');
+      if (secEl) body.target_seconds_per_q = secEl.value;
       const resp = await fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          target_score: document.getElementById('setting-target').value,
-          accuracy_focus: document.getElementById('setting-accuracy').value,
-          weakness_threshold: document.getElementById('setting-threshold').value
-        })
+        body: JSON.stringify(body)
       });
       if (resp.ok) {
         document.getElementById('settings-saved').style.display = 'inline';
@@ -311,5 +506,13 @@
       }
     }
   </script>
+
+  <nav class="mobile-bottomnav" role="navigation">
+    <a href="/"><span class="icon">&#9632;</span> Dash</a>
+    <a href="/test/setup"><span class="icon">&#9654;</span> Test</a>
+    <a href="/analytics" class="active"><span class="icon">&#9733;</span> Stats</a>
+    <a href="/errorlog"><span class="icon">&#9888;</span> Errs</a>
+    <a href="/search"><span class="icon">&#128269;</span> Find</a>
+  </nav>
 </body>
 </html>

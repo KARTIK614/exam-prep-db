@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bookmarks &mdash; Exam Prep Platform</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('theme');
+        var theme = saved || (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.dataset.theme = theme;
+      } catch (_e) { document.documentElement.dataset.theme = 'light'; }
+    })();
+  </script>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <h1>Exam Platform</h1>
+      <span>Exam Prep Platform</span>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="/"><span class="icon">&#9632;</span> Dashboard</a>
+      <a href="/test/setup"><span class="icon">&#9654;</span> Take Test</a>
+      <a href="/analytics"><span class="icon">&#9733;</span> Analytics</a>
+      <a href="/errorlog"><span class="icon">&#9888;</span> Error Log</a>
+      <a href="/review"><span class="icon">&#8635;</span> Review</a>
+      <a href="/bookmarks" class="active"><span class="icon">&#9733;</span> Bookmarks</a>
+      <a href="/search"><span class="icon">&#128269;</span> Search</a>
+      <a href="/logout" class="nav-logout" style="margin-top:auto"><span class="icon">&#8592;</span> Logout</a>
+    </nav>
+    <button type="button" class="theme-toggle-btn" onclick="toggleTheme()" title="Toggle theme" aria-pressed="false">
+      <span class="theme-icon" aria-hidden="true">&#9788;</span>
+      <span class="theme-label">Theme</span>
+    </button>
+  </aside>
+
+  <header class="mobile-topbar" role="banner">
+    <a href="/" class="mobile-brand">Exam Platform</a>
+    <div class="mobile-topbar-actions">
+      <button type="button" class="icon-btn" onclick="openSearch()" title="Search">&#128269;</button>
+      <button type="button" class="icon-btn" onclick="toggleTheme()" title="Toggle theme">&#9788;</button>
+      <a class="icon-btn" href="/logout" title="Logout">&#8592;</a>
+    </div>
+  </header>
+
+  <div class="main">
+    <div class="page-header">
+      <div class="flex-between">
+        <div>
+          <h2>Bookmarks</h2>
+          <p>{{ bookmarks|length }} starred question{{ '' if bookmarks|length == 1 else 's' }} &mdash; come back to these later.</p>
+        </div>
+        <span class="badge {{ 'badge-muted' if bookmarks|length == 0 else 'badge-primary' }}">
+          &#9733; {{ bookmarks|length }}
+        </span>
+      </div>
+    </div>
+
+    <div class="content">
+      {% if not bookmarks %}
+        <div class="card">
+          <div class="card-body" style="text-align:center;padding:32px">
+            <div style="font-size:36px;margin-bottom:8px">&#9734;</div>
+            <p>No bookmarks yet.</p>
+            <p class="text-muted" style="font-size:13px">
+              Tap the star at the top-right of any question during a test to save it here.
+            </p>
+          </div>
+        </div>
+      {% else %}
+        <div class="card">
+          <div class="card-body" style="padding:0">
+            <table style="width:100%;border-collapse:collapse">
+              <thead>
+                <tr style="background:var(--surface-alt);font-size:12px;text-transform:uppercase;letter-spacing:0.05em">
+                  <th style="text-align:left;padding:10px 12px">Topic</th>
+                  <th style="text-align:left;padding:10px 12px">Question preview</th>
+                  <th style="text-align:left;padding:10px 12px">Diff</th>
+                  <th style="text-align:left;padding:10px 12px">Saved</th>
+                  <th style="padding:10px 12px"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for b in bookmarks %}
+                <tr style="border-top:1px solid var(--border)">
+                  <td style="padding:10px 12px;font-size:13px">
+                    <div style="font-weight:600">{{ b.topic_name or '&mdash;' }}</div>
+                    <div class="text-muted" style="font-size:11px">{{ b.subject or '' }}</div>
+                  </td>
+                  <td style="padding:10px 12px;font-size:13px;max-width:520px">
+                    {{ (b.question_text or '')[:180] }}{% if b.question_text and b.question_text|length > 180 %}&hellip;{% endif %}
+                  </td>
+                  <td style="padding:10px 12px">
+                    <span class="badge badge-muted">{{ b.difficulty or 'medium' }}</span>
+                  </td>
+                  <td style="padding:10px 12px;font-size:12px" class="text-muted">
+                    {{ (b.created_at or '')[:10] }}
+                  </td>
+                  <td style="padding:10px 12px;text-align:right">
+                    <button class="btn btn-outline" data-qid="{{ b.question_id }}"
+                            onclick="removeBookmark(this)" style="font-size:12px;padding:6px 10px">
+                      &#9733; Remove
+                    </button>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <script src="/static/script.js"></script>
+  <script>
+    async function removeBookmark(btn) {
+      const qid = btn.getAttribute('data-qid');
+      if (!qid) return;
+      const resp = await fetch('/api/bookmark/' + qid, { method: 'POST' });
+      if (!resp.ok) return;
+      const row = btn.closest('tr');
+      if (row) row.remove();
+    }
+  </script>
+
+  <nav class="mobile-bottomnav" role="navigation">
+    <a href="/"><span class="icon">&#9632;</span> Dash</a>
+    <a href="/test/setup"><span class="icon">&#9654;</span> Test</a>
+    <a href="/analytics"><span class="icon">&#9733;</span> Stats</a>
+    <a href="/errorlog"><span class="icon">&#9888;</span> Errs</a>
+    <a href="/search"><span class="icon">&#128269;</span> Find</a>
+  </nav>
+</body>
+</html>
