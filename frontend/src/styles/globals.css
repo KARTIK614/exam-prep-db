@@ -1,0 +1,94 @@
+/*
+ * Global styles: Tailwind layers + design tokens.
+ *
+ * Design tokens are declared as HSL triplets so Tailwind's
+ * `hsl(var(--x))` pattern (see tailwind.config.ts) can apply
+ * opacity modifiers cleanly. Both light and dark palettes share
+ * the same variable names — components consume them by class name
+ * (e.g. `bg-bg-primary text-text-primary`) with zero conditional
+ * theme logic.
+ *
+ * Add new tokens here first, then map them in tailwind.config.ts.
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root,
+  [data-theme='light'] {
+    /* Surfaces */
+    --bg-primary: 0 0% 100%;
+    --bg-secondary: 210 20% 98%;
+
+    /* Text */
+    --text-primary: 222 47% 11%;
+    --text-muted: 215 16% 47%;
+
+    /* Structural */
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 217 91% 60%;
+
+    /* Accent (primary action colour) */
+    --accent: 217 91% 60%;
+    --accent-foreground: 0 0% 100%;
+
+    /* Status */
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+    --danger: 0 84% 60%;
+    --danger-foreground: 0 0% 100%;
+
+    /* Layout */
+    --radius: 0.5rem;
+  }
+
+  [data-theme='dark'] {
+    --bg-primary: 222 47% 8%;
+    --bg-secondary: 217 33% 14%;
+
+    --text-primary: 210 40% 98%;
+    --text-muted: 215 20% 65%;
+
+    --border: 217 33% 20%;
+    --input: 217 33% 20%;
+    --ring: 217 91% 60%;
+
+    --accent: 217 91% 60%;
+    --accent-foreground: 0 0% 100%;
+
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+    --danger: 0 72% 51%;
+    --danger-foreground: 0 0% 100%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-bg-primary text-text-primary antialiased;
+    font-family:
+      ui-sans-serif,
+      system-ui,
+      -apple-system,
+      'Segoe UI',
+      Roboto,
+      'Helvetica Neue',
+      Arial,
+      sans-serif;
+  }
+}

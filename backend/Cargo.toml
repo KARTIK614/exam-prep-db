@@ -1,0 +1,73 @@
+[package]
+name = "exam-prep-backend"
+version = "0.1.0"
+edition = "2021"
+description = "Exam prep platform — Rust backend skeleton (v3 Phase 1)"
+license = "UNLICENSED"
+publish = false
+
+[[bin]]
+name = "exam-prep-backend"
+path = "src/main.rs"
+
+[dependencies]
+# --- runtime + framework (per R1 §11) ---
+tokio        = { version = "1.40", features = ["macros", "rt-multi-thread", "signal", "time", "sync", "fs"] }
+axum         = { version = "0.8",  features = ["macros", "http2"] }
+tower        = { version = "0.5",  features = ["util", "timeout", "limit"] }
+tower-http   = { version = "0.6",  features = ["trace", "cors", "catch-panic", "request-id"] }
+hyper        = { version = "1.5" }
+
+# --- database (per R2 §1 — official libsql crate) ---
+libsql       = { version = "0.6", features = ["remote"] }
+
+# --- serialization ---
+serde        = { version = "1",   features = ["derive"] }
+serde_json   = "1"
+
+# --- errors ---
+thiserror    = "1"
+anyhow       = "1"
+
+# --- config + secrets ---
+dotenvy      = "0.15"
+secrecy      = { version = "0.10", features = ["serde"] }
+
+# --- http (kept for future LLM clients; not used in the skeleton) ---
+url          = "2"
+
+# --- observability ---
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+
+# --- utilities ---
+uuid         = { version = "1",   features = ["v4", "fast-rng"] }
+
+# --- auth (v3 phase 3) ---
+argon2         = { version = "0.5", features = ["std"] }
+jsonwebtoken   = "9"
+sha2           = "0.10"
+hex            = "0.4"
+validator      = { version = "0.18", features = ["derive"] }
+chrono         = { version = "0.4", features = ["serde"] }
+rand           = "0.8"
+base64         = "0.22"
+
+# --- rate limiting (v3 phase 3) ---
+# tower_governor 0.4 targets axum 0.7; 0.6 (or later) targets axum 0.8. Pinned
+# to a range so cargo picks the axum-0.8-compatible version currently on
+# crates.io.
+tower_governor = "0.6"
+
+# --- HTTP client for outbound LLM calls (v3 phase 7 — Deep Dive → Gemini) ---
+# Default features stripped so we don't pull in native-tls / OpenSSL; rustls
+# keeps the build hermetic and cross-compiles cleanly.
+reqwest        = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# --- multipart uploads (v3 phase 7 — admin PDF upload) ---
+axum-extra     = { version = "0.10", features = ["multipart"] }
+
+[profile.release]
+lto           = "thin"
+codegen-units = 1
+strip         = "symbols"
