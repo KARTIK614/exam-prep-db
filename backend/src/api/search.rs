@@ -160,8 +160,9 @@ pub async fn fetch_matches(
             Ok(libsql::Value::Integer(i)) => Some(i as f64),
             _ => None,
         };
+        // F01 (V3 critic): strip correct_option + explanation before wire.
         out.push(SearchHit {
-            question,
+            question: crate::schemas::content::PublicQuestion::from(question),
             snippet,
             rank,
         });
@@ -217,8 +218,9 @@ async fn fetch_like_fallback(
     while let Some(row) = rows.next().await? {
         let question = Question::from_row(&row)?;
         let snippet = compute_like_snippet(question.question_text.as_deref(), raw_q);
+        // F01 (V3 critic): PublicQuestion strips correct_option + explanation.
         out.push(SearchHit {
-            question,
+            question: crate::schemas::content::PublicQuestion::from(question),
             snippet,
             rank: None,
         });

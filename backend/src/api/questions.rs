@@ -29,7 +29,7 @@ use crate::api::AppState;
 use crate::error::AppError;
 use crate::middleware::auth::RequireAuth;
 use crate::models::Question;
-use crate::schemas::content::{QuestionListQuery, QuestionListResponse};
+use crate::schemas::content::{PublicQuestion, QuestionListQuery, QuestionListResponse};
 
 // ---------- helpers --------------------------------------------------------
 
@@ -226,9 +226,12 @@ pub async fn list_questions(
     values.push(libsql::Value::Integer(limit as i64));
 
     let mut rows = state.db.conn().query(&sql, values).await?;
-    let mut items = Vec::with_capacity(limit as usize);
+    // F01 (V3 critic): convert Question -> PublicQuestion so the wire
+    // response NEVER carries correct_option / explanation. Any user with a
+    // valid JWT would otherwise be able to dump the whole answer key.
+    let mut items: Vec<PublicQuestion> = Vec::with_capacity(limit as usize);
     while let Some(row) = rows.next().await? {
-        items.push(Question::from_row(&row)?);
+        items.push(PublicQuestion::from(Question::from_row(&row)?));
     }
 
     let last_id = items.last().map(|q| q.id);
@@ -245,7 +248,7 @@ pub async fn get_question(
     State(state): State<AppState>,
     RequireAuth(_): RequireAuth,
     Path(id): Path<i64>,
-) -> Result<Json<Question>, AppError> {
+) -> Result<Json<PublicQuestion>, AppError> {
     let cols = Question::COLUMNS
         .iter()
         .map(|c| format!("q.{c}"))
@@ -258,7 +261,9 @@ pub async fn get_question(
     );
     let mut rows = state.db.conn().query(&sql, params![id]).await?;
     match rows.next().await? {
-        Some(row) => Ok(Json(Question::from_row(&row)?)),
+        // F01 (V3 critic): PublicQuestion strips correct_option +
+        // explanation before serialization.
+        Some(row) => Ok(Json(PublicQuestion::from(Question::from_row(&row)?))),
         None => Err(AppError::NotFound("question")),
     }
 }

@@ -10,6 +10,68 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::{Question, Topic};
 
+// ------------- PublicQuestion ---------------------------------------------
+//
+// F01 (V3 critic, CRITICAL): the underlying `Question` model includes
+// `correct_option` and `explanation` — fields that MUST NOT reach the
+// end-user before they answer, otherwise `GET /questions/{id}` becomes a
+// free answer-key dump for any authenticated user.  Every user-facing
+// content endpoint (`/questions`, `/questions/{id}`, `/search`) returns
+// `PublicQuestion` instead. Admin endpoints keep using `Question` directly
+// via `admin::questions` etc.
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicQuestion {
+    pub id: i64,
+    pub topic_id: Option<i64>,
+    pub question_text: Option<String>,
+    pub option_a: Option<String>,
+    pub option_b: Option<String>,
+    pub option_c: Option<String>,
+    pub option_d: Option<String>,
+    pub difficulty: Option<String>,
+    pub source: Option<String>,
+    pub language: Option<String>,
+    pub disabled: bool,
+    pub updated_at: Option<String>,
+    pub confidence: Option<String>,
+    pub section: Option<String>,
+    pub sub_topic: Option<String>,
+    pub pyq_exam: Option<String>,
+    pub pyq_year: Option<i64>,
+    // review_notes + confidence_reviewed_at intentionally omitted — they
+    // may contain internal grader remarks.
+}
+
+impl From<Question> for PublicQuestion {
+    fn from(q: Question) -> Self {
+        PublicQuestion {
+            id: q.id,
+            topic_id: q.topic_id,
+            question_text: q.question_text,
+            option_a: q.option_a,
+            option_b: q.option_b,
+            option_c: q.option_c,
+            option_d: q.option_d,
+            difficulty: q.difficulty,
+            source: q.source,
+            language: q.language,
+            disabled: q.disabled,
+            updated_at: q.updated_at,
+            confidence: q.confidence,
+            section: q.section,
+            sub_topic: q.sub_topic,
+            pyq_exam: q.pyq_exam,
+            pyq_year: q.pyq_year,
+        }
+    }
+}
+
+impl From<&Question> for PublicQuestion {
+    fn from(q: &Question) -> Self {
+        PublicQuestion::from(q.clone())
+    }
+}
+
 // ------------- Topics ------------------------------------------------------
 
 /// Response shape for `GET /topics/{id}`.
@@ -59,7 +121,9 @@ pub struct QuestionListQuery {
 
 #[derive(Debug, Serialize)]
 pub struct QuestionListResponse {
-    pub items: Vec<Question>,
+    // F01 (V3 critic): PublicQuestion, not Question — see PublicQuestion
+    // docstring above. correct_option + explanation stripped from wire.
+    pub items: Vec<PublicQuestion>,
     /// Opaque cursor for the next page, or `null` at end-of-list.
     pub next_cursor: Option<String>,
 }
@@ -83,12 +147,15 @@ pub struct SearchQuery {
     pub limit: Option<u32>,
 }
 
-/// One row of `/search` results — a full question row plus the FTS5
-/// snippet and bm25 rank. `rank` is `null` on the LIKE fallback path.
+/// One row of `/search` results — question payload (public) plus the
+/// FTS5 snippet and bm25 rank. `rank` is `null` on the LIKE fallback path.
+///
+/// F01 (V3 critic): `question` was `Question` (leaked correct_option +
+/// explanation). Now `PublicQuestion`.
 #[derive(Debug, Serialize)]
 pub struct SearchHit {
     #[serde(flatten)]
-    pub question: Question,
+    pub question: PublicQuestion,
     pub snippet: String,
     pub rank: Option<f64>,
 }

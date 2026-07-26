@@ -220,9 +220,13 @@ pub fn router(state: AppState) -> Router {
             "/admin/uploads/{id}/import",
             post(admin::uploads::import_upload),
         )
+        // F02 (V3 critic): rate-limit LLM synthesis. Each start_batch call
+        // fans out to DeepSeek/Claude for N generations. An admin token
+        // (leaked or rogue) could burn thousands of dollars in minutes.
+        // 5/hour per IP = burst 5, replenish every 720s.
         .route(
             "/admin/synthesize",
-            post(admin::synthesize::start_batch),
+            post(admin::synthesize::start_batch).route_layer(ip_rl!(720, 5)),
         )
         .route(
             "/admin/synthesize/{batch_id}",
@@ -293,11 +297,34 @@ fn build_cors(origin: Option<&str>) -> CorsLayer {
         .allow_headers(Any)
         .max_age(Duration::from_secs(600));
 
+    // F03 (V3 critic): the previous fallback silently allowed `Any` origin
+    // when CORS_ORIGIN was unset or malformed. In production that means
+    // any website with a stolen JWT could call our API from the browser.
+    // Now:
+    //   * missing/blank → keep `Any` but only after explicitly unblocking
+    //     via `ALLOW_ANY_CORS_ORIGIN=1` (dev/staging escape hatch);
+    //     otherwise panic during startup.
+    //   * malformed value → panic (fail-fast surface).
+    let allow_any = std::env::var("ALLOW_ANY_CORS_ORIGIN")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
     match origin {
-        Some(o) => match HeaderValue::from_str(o) {
+        Some(o) if !o.trim().is_empty() => match HeaderValue::from_str(o) {
             Ok(hv) => base.allow_origin(hv),
-            Err(_) => base.allow_origin(Any),
+            Err(err) => panic!(
+                "CORS_ORIGIN is set to {o:?} but is not a valid HTTP header value: {err}. \
+                 Fix the env var; do not fall back to Any silently."
+            ),
         },
-        None => base.allow_origin(Any),
+        _ if allow_any => {
+            tracing::warn!("CORS_ORIGIN unset; falling back to Any because ALLOW_ANY_CORS_ORIGIN=1");
+            base.allow_origin(Any)
+        }
+        _ => panic!(
+            "CORS_ORIGIN env var is required in production. Set it to your \
+             frontend origin (e.g. https://exam.example.com) or export \
+             ALLOW_ANY_CORS_ORIGIN=1 for local development."
+        ),
     }
 }
