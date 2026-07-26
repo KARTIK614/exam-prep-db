@@ -100,10 +100,14 @@
                 <div style="font-size:36px;font-weight:700" id="answered-count">0</div>
                 <div style="font-size:13px;color:var(--text-muted)">of {{ total }} answered</div>
               </div>
-              <div style="text-align:center;margin-bottom:12px">
+              <div id="correct-so-far-block" style="text-align:center;margin-bottom:12px">
                 <div style="font-size:24px;font-weight:700;color:var(--success)" id="correct-count">0</div>
                 <div style="font-size:13px;color:var(--text-muted)">correct so far</div>
               </div>
+              {# Hide the "correct so far" widget in exam mode — no correctness reveal until finish. #}
+              {% if session.get('test_mode') == 'exam' %}
+              <script>document.getElementById('correct-so-far-block').style.display = 'none';</script>
+              {% endif %}
               <button class="btn btn-danger" style="width:100%" onclick="finishTest()">
                 &#9632; Finish Test
               </button>
@@ -415,22 +419,47 @@
       const result = await resp.json();
       if (result.error) return;
 
+      // Correctness fields (is_correct / correct_option / explanation) are only
+      // present in practice mode — exam mode gates them until /finish so we
+      // don't leak the answer key mid-test. See bp_api.submit_answer and
+      // memory/user_feedback_sujit.md (Sujit, 2026-07-19).
+      const hasFeedback = result.is_correct !== undefined;
+
       answered[currentIdx] = {
         selected: selected,
-        isCorrect: result.is_correct,
-        correct: result.correct_option
+        isCorrect: hasFeedback ? result.is_correct : null,
+        correct: hasFeedback ? result.correct_option : null,
+        feedbackHidden: !hasFeedback,
       };
 
-      if (result.is_correct) correctCount++;
+      if (hasFeedback && result.is_correct) correctCount++;
 
-      showAnsweredState(currentIdx, answered[currentIdx], result.explanation);
+      if (hasFeedback) {
+        showAnsweredState(currentIdx, answered[currentIdx], result.explanation);
+      } else {
+        showAnsweredStateExamMode(currentIdx);
+      }
 
       document.getElementById('answered-count').textContent = result.answered;
-      document.getElementById('correct-count').textContent = correctCount;
+      const correctBadge = document.getElementById('correct-count');
+      if (correctBadge) {
+        correctBadge.textContent = hasFeedback ? correctCount : '—';
+      }
 
       // Recompute palette state for this cell (answered / answered_review /
       // + practice-mode correctness dot).
       refreshPaletteCell(currentIdx);
+    }
+
+    // Exam mode: mark question answered but don't reveal correctness or
+    // highlight any option. Auto-advance to keep the flow moving.
+    function showAnsweredStateExamMode(idx) {
+      document.querySelectorAll('.btn-option').forEach((btn) => {
+        btn.style.pointerEvents = 'none';
+        // No .correct / .wrong classes — they'd leak the answer key.
+      });
+      const fb = document.getElementById('feedback-area');
+      if (fb) fb.textContent = '';
     }
 
     // POST /api/mark_for_review — toggles session["review_marks"][idx].

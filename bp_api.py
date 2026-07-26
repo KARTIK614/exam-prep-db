@@ -135,13 +135,22 @@ def submit_answer():
     session["current_q"] = q_idx
     session.modified = True
 
-    return jsonify({
-        "is_correct": is_correct,
-        "correct_option": q["correct_option"],
-        "explanation": q.get("explanation", ""),
+    # Gate correctness/explanation reveal by test mode.
+    # In exam mode ("exam") — mirror real exam behavior: no correctness leak
+    # until final submit. Practice mode retains immediate feedback since
+    # that's the whole point of practice.
+    # Driver: user feedback from Sujit (2026-07-19). See
+    # memory/user_feedback_sujit.md.
+    test_mode = session.get("test_mode", "practice")
+    payload = {
         "answered": len(session["responses"]),
         "total": len(session["questions"]),
-    })
+    }
+    if test_mode != "exam":
+        payload["is_correct"] = is_correct
+        payload["correct_option"] = q["correct_option"]
+        payload["explanation"] = q.get("explanation", "")
+    return jsonify(payload)
 
 
 @bp.route("/resolve_error", methods=["POST"])
