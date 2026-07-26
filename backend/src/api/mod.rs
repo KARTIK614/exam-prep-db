@@ -24,6 +24,7 @@ use axum::Router;
 use tower::ServiceBuilder;
 use tower_governor::governor::GovernorConfigBuilder;
 use tower_governor::GovernorLayer;
+use tower_governor::key_extractor::SmartIpKeyExtractor;
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
@@ -70,9 +71,15 @@ pub struct AppState {
 /// second".
 macro_rules! ip_rl {
     ($per_second:expr, $burst:expr) => {{
+        // SmartIpKeyExtractor honours X-Forwarded-For / X-Real-IP before
+        // falling back to the direct socket address. Required on Render
+        // (proxied) and on localhost (no peer IP header). The plain
+        // PeerIpKeyExtractor returns "Unable To Extract Key!" as a 500 in
+        // both cases — see F06 in docs/plans/V3_CRITIC_REPORT.md.
         let cfg = GovernorConfigBuilder::default()
             .per_second($per_second)
             .burst_size($burst)
+            .key_extractor(SmartIpKeyExtractor)
             .finish()
             .expect("valid governor config");
         GovernorLayer { config: Arc::new(cfg) }

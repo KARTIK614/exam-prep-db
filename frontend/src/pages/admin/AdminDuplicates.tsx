@@ -28,7 +28,7 @@ export default function AdminDuplicates() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {[p.q1, p.q2].map((q, idx) => (
+                {[p.q1, p.q2].map((q) => (
                   <div
                     key={q.id}
                     className="rounded border border-border bg-bg-secondary p-3 text-sm"

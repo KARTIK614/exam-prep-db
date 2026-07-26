@@ -64,10 +64,16 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| format!("failed to bind {}", cfg.bind_addr))?;
     tracing::info!(addr = %cfg.bind_addr, "listening");
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .context("axum::serve failed")?;
+    // ConnectInfo<SocketAddr> is required by SmartIpKeyExtractor
+    // (tower_governor) so rate-limits work behind proxies (Render) AND
+    // on localhost — see docs/plans/V3_CRITIC_REPORT.md F06.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .context("axum::serve failed")?;
 
     Ok(())
 }

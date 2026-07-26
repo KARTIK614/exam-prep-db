@@ -79,8 +79,14 @@ export function useFlagQuestion() {
 export function useToggleBookmark() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, isBookmarked }: { id: number; isBookmarked: boolean }) =>
-      isBookmarked ? questionsApi.unbookmark(id) : questionsApi.bookmark(id),
+    mutationFn: async ({ id, isBookmarked }: { id: number; isBookmarked: boolean }) => {
+      // Both branches normalized to void — caller only cares about invalidation.
+      if (isBookmarked) {
+        await questionsApi.unbookmark(id);
+      } else {
+        await questionsApi.bookmark(id);
+      }
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['bookmarks'] });
     },

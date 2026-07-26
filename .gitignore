@@ -17,3 +17,16 @@ data/extracted_questions/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# --- Rust backend (v3) ---
+backend/target/
+backend/.env
+backend/Cargo.lock.bak
+
+# --- React frontend (v3) ---
+frontend/node_modules/
+frontend/dist/
+frontend/tsconfig*.tsbuildinfo
+frontend/.env
+frontend/.env.local
+
