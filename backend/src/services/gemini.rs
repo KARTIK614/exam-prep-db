@@ -50,7 +50,7 @@ pub async fn generate(cfg: &LlmConfig, prompt: &str) -> anyhow::Result<String> {
 
     let resp = client
         .post(&url)
-        .query(&[("key", api_key.expose_secret().as_str())])
+        .query(&[("key", api_key.expose_secret())])
         .json(&body)
         .send()
         .await?;

@@ -90,37 +90,44 @@ pub async fn list_review(
 }
 
 async fn compute_counts(state: &AppState) -> Result<AdminReviewCounts, AppError> {
-    let mut c = AdminReviewCounts::default();
-    let query = |sql: &str| async move {
+    // Inline helper — closure-returning-async-move had a lifetime issue with
+    // the borrowed &str; simpler to call inline per query.
+    async fn count(state: &AppState, sql: &str) -> Result<i64, AppError> {
         let mut rows = state.db.conn().query(sql, ()).await?;
-        let n: i64 = match rows.next().await? {
+        Ok(match rows.next().await? {
             Some(row) => row.get::<i64>(0)?,
             None => 0,
-        };
-        Ok::<i64, AppError>(n)
-    };
-    c.medium = query(
+        })
+    }
+
+    let mut c = AdminReviewCounts::default();
+    c.medium = count(
+        state,
         "SELECT COUNT(*) FROM questions \
           WHERE (disabled=0 OR disabled IS NULL) AND confidence = 'medium'",
     )
     .await?;
-    c.has_notes = query(
+    c.has_notes = count(
+        state,
         "SELECT COUNT(*) FROM questions \
           WHERE (disabled=0 OR disabled IS NULL) \
             AND review_notes IS NOT NULL AND review_notes <> ''",
     )
     .await?;
-    c.synthetic = query(
+    c.synthetic = count(
+        state,
         "SELECT COUNT(*) FROM questions \
           WHERE (disabled=0 OR disabled IS NULL) AND source LIKE 'synthetic-v%'",
     )
     .await?;
-    c.deferred = query(
+    c.deferred = count(
+        state,
         "SELECT COUNT(*) FROM questions \
           WHERE (disabled=0 OR disabled IS NULL) AND review_notes LIKE '%[deferred%'",
     )
     .await?;
-    c.non_high = query(
+    c.non_high = count(
+        state,
         "SELECT COUNT(*) FROM questions \
           WHERE (disabled=0 OR disabled IS NULL) \
             AND (confidence IS NULL OR confidence <> 'high')",

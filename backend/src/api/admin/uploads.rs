@@ -12,7 +12,8 @@
 //! spec. The route returns 200 with `status="not_implemented"` so the FE
 //! can render a "queued for admin" state rather than a hard 5xx.
 
-use axum::extract::{Multipart, Path, State};
+use axum::extract::{Path, State};
+use axum_extra::extract::Multipart;
 use axum::http::StatusCode;
 use axum::Json;
 use chrono::Utc;
