@@ -18,11 +18,16 @@ use crate::middleware::auth::RequireAuth;
 use crate::models::Topic;
 use crate::schemas::content::TopicWithCount;
 
+#[derive(Debug, serde::Serialize)]
+pub struct TopicsListResponse {
+    pub items: Vec<Topic>,
+}
+
 /// GET /topics — return every topic ordered by (paper, id).
 pub async fn list_topics(
     State(state): State<AppState>,
     RequireAuth(_): RequireAuth,
-) -> Result<Json<Vec<Topic>>, AppError> {
+) -> Result<Json<TopicsListResponse>, AppError> {
     let sql = format!(
         "SELECT {} FROM topics ORDER BY COALESCE(paper, ''), id",
         Topic::COLUMNS.join(", ")
@@ -32,7 +37,7 @@ pub async fn list_topics(
     while let Some(row) = rows.next().await? {
         out.push(Topic::from_row(&row)?);
     }
-    Ok(Json(out))
+    Ok(Json(TopicsListResponse { items: out }))
 }
 
 /// GET /topics/{id} — one topic with a live `question_count`.

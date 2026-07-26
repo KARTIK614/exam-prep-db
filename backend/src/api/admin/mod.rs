@@ -7,6 +7,7 @@ pub mod duplicates;
 pub mod flags;
 pub mod questions;
 pub mod review;
+pub mod stats;
 pub mod synthesize;
 pub mod uploads;
 pub mod users;

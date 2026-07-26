@@ -42,8 +42,10 @@ pub struct MasteryResponse {
 /// One cell in the heatmap grid. `None` cell = no attempts in that bucket.
 #[derive(Debug, Serialize, Clone)]
 pub struct HeatmapCell {
+    #[serde(rename = "attempted")]
     pub attempts: i64,
     pub correct: i64,
+    #[serde(rename = "accuracy")]
     pub accuracy_pct: f64,
 }
 
@@ -54,6 +56,7 @@ pub struct HeatmapCell {
 #[derive(Debug, Serialize)]
 pub struct HeatmapRow {
     pub topic_id: i64,
+    #[serde(rename = "name")]
     pub topic_name: Option<String>,
     pub weightage: i64,
     pub cells: std::collections::BTreeMap<String, Option<HeatmapCell>>,
@@ -61,12 +64,9 @@ pub struct HeatmapRow {
 
 #[derive(Debug, Serialize)]
 pub struct HeatmapResponse {
-    /// Echoed back so the FE can tell which dim it received (a stale FE
-    /// hitting the endpoint without `dim` gets the `difficulty` default).
     pub dim: String,
-    /// Ordered list of the bucket keys present on every row (in display
-    /// order). Callers can iterate this rather than sniffing map keys.
     pub buckets: Vec<String>,
+    #[serde(rename = "topics")]
     pub rows: Vec<HeatmapRow>,
 }
 
@@ -113,28 +113,26 @@ pub struct NextWeakTopicResponse {
 
 // ---------- GET /analytics/pacing -----------------------------------------
 
-/// Per-test pacing row for the trend chart.
+/// Per-test pacing row for the trend chart. `paper`, `score`, `date` are
+/// carried through so the FE hover tooltip can render context without a
+/// second round-trip.
 #[derive(Debug, Serialize)]
 pub struct PacingTestRow {
     pub test_id: i64,
+    #[serde(rename = "avg_time")]
     pub avg_sec_per_q: f64,
+    pub paper: Option<String>,
+    pub score: Option<f64>,
+    pub date: Option<String>,
 }
 
-/// One difficulty bucket in the pacing block.
+/// One row in the FE's pace-by-difficulty array. Shape chosen to match
+/// the FE type: `{difficulty, avg_time, n}`.
 #[derive(Debug, Serialize)]
-pub struct PacingByDifficulty {
-    /// `target_sec_per_q`, same across buckets today (kept per-bucket so
-    /// future per-difficulty targets can slot in without a wire break).
-    pub target: i64,
-    /// Mean seconds/question actually observed in this bucket.
-    pub actual: f64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct PacingByDifficultyMap {
-    pub easy: PacingByDifficulty,
-    pub medium: PacingByDifficulty,
-    pub hard: PacingByDifficulty,
+pub struct PacingByDifficultyEntry {
+    pub difficulty: String,
+    pub avg_time: f64,
+    pub n: i64,
 }
 
 /// One "slow and wrong" row — questions where the user spent more than
@@ -142,26 +140,25 @@ pub struct PacingByDifficultyMap {
 #[derive(Debug, Serialize)]
 pub struct SlowAndWrongRow {
     pub question_id: i64,
+    #[serde(rename = "topic")]
     pub topic_name: Option<String>,
     pub question_text: Option<String>,
+    #[serde(rename = "time_spent_sec")]
     pub time_spent: f64,
     pub difficulty: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct PacingResponse {
+    #[serde(rename = "time_trend")]
     pub tests: Vec<PacingTestRow>,
-    /// Target seconds per question. Sourced from `settings.target_seconds_per_q`
-    /// (default 72). Settings are global today (per R2 §9); v4 will
-    /// namespace per-user.
+    #[serde(rename = "target_sec")]
     pub target_sec_per_q: i64,
-    /// 5-test trailing moving average of `avg_sec_per_q`. Same length as
-    /// `tests`. `None` at any index where the window is empty (only
-    /// possible when there are zero tests). Matches the Flask
-    /// `bp_analytics.py::dashboard` `ma_pace` computation, which always
-    /// emits a value when the window has at least one observation.
+    #[serde(rename = "ma_pace")]
     pub moving_avg_5: Vec<Option<f64>>,
-    pub by_difficulty: PacingByDifficultyMap,
+    #[serde(rename = "pace_by_difficulty")]
+    pub by_difficulty: Vec<PacingByDifficultyEntry>,
+    #[serde(rename = "slow_wrong")]
     pub slow_and_wrong: Vec<SlowAndWrongRow>,
 }
 

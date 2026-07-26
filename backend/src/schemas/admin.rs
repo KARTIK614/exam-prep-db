@@ -243,6 +243,7 @@ pub struct AdminUploadRow {
     pub topic_id: Option<i64>,
     pub topic_name: Option<String>,
     pub status: Option<String>,
+    #[serde(rename = "extracted_count")]
     pub num_extracted: Option<i64>,
     pub num_imported: Option<i64>,
     pub model: Option<String>,

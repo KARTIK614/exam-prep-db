@@ -18,10 +18,15 @@ pub struct BookmarkListQuery {
     pub limit: Option<u32>,
 }
 
+/// The nested `question` object matches the FE `Question` type — the FE
+/// bookmark card renders `b.question.topic_id`, `b.question.question_text`,
+/// `b.question.difficulty` and so on. We denormalise the fields the FE
+/// actually reads (rather than serialising the full 20-column Question)
+/// so we don't pay for columns the bookmark card never shows.
 #[derive(Debug, Serialize)]
-pub struct BookmarkRow {
-    pub bookmark_id: i64,
-    pub question_id: i64,
+pub struct BookmarkQuestion {
+    pub id: i64,
+    pub topic_id: Option<i64>,
     pub question_text: Option<String>,
     pub option_a: Option<String>,
     pub option_b: Option<String>,
@@ -30,12 +35,19 @@ pub struct BookmarkRow {
     pub correct_option: Option<String>,
     pub difficulty: Option<String>,
     pub topic_name: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BookmarkRow {
+    pub bookmark_id: i64,
+    pub question: BookmarkQuestion,
     pub created_at: Option<String>,
     pub note: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct BookmarkListResponse {
+    #[serde(rename = "bookmarks")]
     pub items: Vec<BookmarkRow>,
     pub next_cursor: Option<String>,
 }

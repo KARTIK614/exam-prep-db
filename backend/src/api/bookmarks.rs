@@ -20,7 +20,7 @@ use crate::error::AppError;
 use crate::middleware::auth::RequireAuth;
 use crate::models::{value_to_opt_string, value_to_opt_i64};
 use crate::schemas::bookmarks::{
-    BookmarkListQuery, BookmarkListResponse, BookmarkRow, BookmarkToggleResponse,
+    BookmarkListQuery, BookmarkListResponse, BookmarkQuestion, BookmarkRow, BookmarkToggleResponse,
 };
 
 // ---------- GET /bookmarks -------------------------------------------------
@@ -33,10 +33,10 @@ pub async fn list_bookmarks(
     let limit = clamp_limit(q.limit);
     let after_id = decode_cursor(q.cursor.as_deref())?;
 
-    // Bookmark id, question payload, topic name, timestamps.
+    // Bookmark id, question payload (denormalised), topic name, timestamps.
     // Left-joined topic so a stale question still renders.
     let mut sql = String::from(
-        "SELECT b.id, b.question_id, q.question_text, q.option_a, q.option_b, \
+        "SELECT b.id, b.question_id, q.topic_id, q.question_text, q.option_a, q.option_b, \
                 q.option_c, q.option_d, q.correct_option, q.difficulty, \
                 t.name AS topic_name, b.created_at, b.note \
            FROM bookmarks b \
@@ -56,19 +56,24 @@ pub async fn list_bookmarks(
     let mut rows = state.db.conn().query(&sql, vals).await?;
     let mut items: Vec<BookmarkRow> = Vec::with_capacity(limit as usize);
     while let Some(row) = rows.next().await? {
+        let bookmark_id = row.get::<i64>(0)?;
+        let question_id = row.get::<i64>(1)?;
         items.push(BookmarkRow {
-            bookmark_id: row.get::<i64>(0)?,
-            question_id: row.get::<i64>(1)?,
-            question_text: value_to_opt_string(row.get_value(2)?),
-            option_a: value_to_opt_string(row.get_value(3)?),
-            option_b: value_to_opt_string(row.get_value(4)?),
-            option_c: value_to_opt_string(row.get_value(5)?),
-            option_d: value_to_opt_string(row.get_value(6)?),
-            correct_option: value_to_opt_string(row.get_value(7)?),
-            difficulty: value_to_opt_string(row.get_value(8)?),
-            topic_name: value_to_opt_string(row.get_value(9)?),
-            created_at: value_to_opt_string(row.get_value(10)?),
-            note: value_to_opt_string(row.get_value(11)?),
+            bookmark_id,
+            question: BookmarkQuestion {
+                id: question_id,
+                topic_id: value_to_opt_i64(row.get_value(2)?),
+                question_text: value_to_opt_string(row.get_value(3)?),
+                option_a: value_to_opt_string(row.get_value(4)?),
+                option_b: value_to_opt_string(row.get_value(5)?),
+                option_c: value_to_opt_string(row.get_value(6)?),
+                option_d: value_to_opt_string(row.get_value(7)?),
+                correct_option: value_to_opt_string(row.get_value(8)?),
+                difficulty: value_to_opt_string(row.get_value(9)?),
+                topic_name: value_to_opt_string(row.get_value(10)?),
+            },
+            created_at: value_to_opt_string(row.get_value(11)?),
+            note: value_to_opt_string(row.get_value(12)?),
         });
     }
 

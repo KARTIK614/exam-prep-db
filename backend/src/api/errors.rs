@@ -40,6 +40,7 @@ pub struct ErrorItem {
 
 #[derive(Debug, Serialize)]
 pub struct ErrorsResponse {
+    #[serde(rename = "errors")]
     pub items: Vec<ErrorItem>,
     pub next_cursor: Option<String>,
 }

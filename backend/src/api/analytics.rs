@@ -40,8 +40,8 @@ use crate::models::{value_to_opt_f64, value_to_opt_i64, value_to_opt_string};
 use crate::schemas::analytics::{
     ConsistencyResponse, ErrorByTopic, ErrorByType, ErrorDistResponse, HeatmapCell,
     HeatmapQuery, HeatmapResponse, HeatmapRow, MasteryResponse, MasteryTile,
-    NextTopicEntry, NextWeakTopicResponse, PacingByDifficulty, PacingByDifficultyMap,
-    PacingResponse, PacingTestRow, SlowAndWrongRow,
+    NextTopicEntry, NextWeakTopicResponse, PacingByDifficultyEntry, PacingResponse,
+    PacingTestRow, SlowAndWrongRow,
 };
 
 // ---------- shared helpers ------------------------------------------------
@@ -734,7 +734,10 @@ pub async fn pacing(
     let target_sec_per_q = settings_int(&state, "target_seconds_per_q", 72).await;
 
     // Per-test avg_sec_per_q. Only completed tests for the caller.
-    let sql = "SELECT mt.id, AVG(tr.time_spent_sec) AS avg_time \
+    // Also pull paper + score + completed_at so the FE hover-tooltip can
+    // render `${date} · ${avg}s · ${score}%` without a second query.
+    let sql = "SELECT mt.id, AVG(tr.time_spent_sec) AS avg_time, \
+                      mt.paper, mt.score, mt.completed_at \
                FROM mock_tests mt \
                JOIN test_responses tr ON mt.id = tr.test_id \
                WHERE mt.user_id = ?1 AND tr.user_id = ?1 \
@@ -752,9 +755,25 @@ pub async fn pacing(
                 .map_err(|e| AppError::Internal(format!("pacing: read avg_time: {e}")))?,
         )
         .unwrap_or(0.0);
+        let paper = value_to_opt_string(
+            row.get_value(2)
+                .map_err(|e| AppError::Internal(format!("pacing: read paper: {e}")))?,
+        );
+        let score = value_to_opt_f64(
+            row.get_value(3)
+                .map_err(|e| AppError::Internal(format!("pacing: read score: {e}")))?,
+        );
+        let date = value_to_opt_string(
+            row.get_value(4)
+                .map_err(|e| AppError::Internal(format!("pacing: read date: {e}")))?,
+        )
+        .map(|s| s.split('T').next().unwrap_or(&s).to_string());
         tests.push(PacingTestRow {
             test_id,
             avg_sec_per_q: round1(avg),
+            paper,
+            score,
+            date,
         });
     }
 
@@ -772,51 +791,41 @@ pub async fn pacing(
         }
     }
 
-    // by_difficulty
+    // by_difficulty — one row per bucket with {difficulty, avg_time, n}.
     let diff_sql = "SELECT COALESCE(q.difficulty, 'medium') AS difficulty, \
-                           AVG(tr.time_spent_sec) AS avg_time \
+                           AVG(tr.time_spent_sec) AS avg_time, \
+                           COUNT(*) AS n \
                     FROM test_responses tr \
                     JOIN questions q ON tr.question_id = q.id \
                     JOIN mock_tests mt ON tr.test_id = mt.id \
                     WHERE tr.user_id = ?1 AND mt.user_id = ?1 \
                       AND mt.status = 'completed' \
-                    GROUP BY difficulty";
+                    GROUP BY difficulty \
+                    ORDER BY CASE difficulty WHEN 'easy' THEN 1 WHEN 'medium' THEN 2 WHEN 'hard' THEN 3 ELSE 4 END";
     let mut rows = state.db.conn().query(diff_sql, params![auth.id]).await?;
-    let mut easy_actual = 0.0f64;
-    let mut medium_actual = 0.0f64;
-    let mut hard_actual = 0.0f64;
+    let mut by_difficulty: Vec<PacingByDifficultyEntry> = Vec::new();
     while let Some(row) = rows.next().await? {
-        let d = value_to_opt_string(
+        let difficulty = value_to_opt_string(
             row.get_value(0)
                 .map_err(|e| AppError::Internal(format!("pacing-diff: read d: {e}")))?,
         )
         .unwrap_or_default();
-        let avg = value_to_opt_f64(
+        let avg_time = value_to_opt_f64(
             row.get_value(1)
                 .map_err(|e| AppError::Internal(format!("pacing-diff: read avg: {e}")))?,
         )
         .unwrap_or(0.0);
-        match d.as_str() {
-            "easy" => easy_actual = round1(avg),
-            "medium" => medium_actual = round1(avg),
-            "hard" => hard_actual = round1(avg),
-            _ => {}
-        }
+        let n = value_to_opt_i64(
+            row.get_value(2)
+                .map_err(|e| AppError::Internal(format!("pacing-diff: read n: {e}")))?,
+        )
+        .unwrap_or(0);
+        by_difficulty.push(PacingByDifficultyEntry {
+            difficulty,
+            avg_time: round1(avg_time),
+            n,
+        });
     }
-    let by_difficulty = PacingByDifficultyMap {
-        easy: PacingByDifficulty {
-            target: target_sec_per_q,
-            actual: easy_actual,
-        },
-        medium: PacingByDifficulty {
-            target: target_sec_per_q,
-            actual: medium_actual,
-        },
-        hard: PacingByDifficulty {
-            target: target_sec_per_q,
-            actual: hard_actual,
-        },
-    };
 
     // slow_and_wrong: is_correct=0 AND time_spent_sec > 2 * target. Top 10.
     let sw_sql = "SELECT q.id, q.question_text, q.difficulty, \

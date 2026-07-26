@@ -197,6 +197,7 @@ pub fn router(state: AppState) -> Router {
         )
         // --- admin (Phase 7) --------------------------------------
         // Individual routes each pull `RequireAdmin` via their extractor.
+        .route("/admin/stats", get(admin::stats::get_stats))
         .route(
             "/admin/questions",
             post(admin::questions::create_question),
@@ -243,6 +244,21 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/admin/uploads/{id}/import",
+            post(admin::uploads::import_upload),
+        )
+        // FE mistakenly hits `pdf-uploads` instead of `uploads` on the
+        // AdminUploads page — alias both paths so the FE keeps working
+        // without a client change. Same handlers on both.
+        .route(
+            "/admin/pdf-uploads",
+            get(admin::uploads::list_uploads).post(admin::uploads::create_upload),
+        )
+        .route(
+            "/admin/pdf-uploads/{id}/extract",
+            post(admin::uploads::extract_upload),
+        )
+        .route(
+            "/admin/pdf-uploads/{id}/import",
             post(admin::uploads::import_upload),
         )
         // F02 (V3 critic): rate-limit LLM synthesis. Each start_batch call
