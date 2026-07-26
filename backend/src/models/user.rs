@@ -37,6 +37,14 @@ pub struct User {
     pub password_reset_expires_at: Option<String>,
     #[serde(skip_serializing)]
     pub refresh_token_hash: Option<String>,
+    /// Consecutive failed-login attempts since the last successful login
+    /// (VAPT H-4). Reset to 0 on any successful login.
+    #[serde(skip_serializing)]
+    pub failed_login_count: i64,
+    /// ISO-8601 timestamp until which login is refused with 401, even
+    /// on a correct password. Cleared on any successful login.
+    #[serde(skip_serializing)]
+    pub locked_until: Option<String>,
 }
 
 impl User {
@@ -55,6 +63,8 @@ impl User {
         "password_reset_token",
         "password_reset_expires_at",
         "refresh_token_hash",
+        "failed_login_count",
+        "locked_until",
     ];
 
     pub fn from_row(row: &libsql::Row) -> anyhow::Result<Self> {
@@ -83,6 +93,11 @@ impl User {
             refresh_token_hash: value_to_opt_string(
                 row.get_value(11).context("users.refresh_token_hash")?,
             ),
+            failed_login_count: value_to_opt_i64(
+                row.get_value(12).context("users.failed_login_count")?,
+            )
+            .unwrap_or(0),
+            locked_until: value_to_opt_string(row.get_value(13).context("users.locked_until")?),
         })
     }
 }

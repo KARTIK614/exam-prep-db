@@ -288,6 +288,24 @@ pub fn router(state: AppState) -> Router {
             request_id_header.clone(),
             MakeRequestUuid,
         ))
+        // Stash the (now-populated) X-Request-Id into a tokio task-local
+        // so `AppError::into_response` can echo it into the JSON error
+        // envelope. Must run AFTER `SetRequestIdLayer` so the header is
+        // present; anything reading REQUEST_ID outside this scope sees
+        // `None` and falls back to `null` (harmless).
+        .layer(axum::middleware::from_fn(
+            |req: axum::extract::Request, next: axum::middleware::Next| async move {
+                let rid = req
+                    .headers()
+                    .get("x-request-id")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("-")
+                    .to_string();
+                crate::error::REQUEST_ID
+                    .scope(rid, next.run(req))
+                    .await
+            },
+        ))
         // One tracing span per request, including method + uri + latency.
         .layer(
             TraceLayer::new_for_http()

@@ -85,9 +85,38 @@ impl Config {
             auth_token: require_secret("TURSO_AUTH_TOKEN")?,
         };
 
+        let access_raw = require("JWT_SECRET")?;
+        let refresh_raw = require("JWT_REFRESH_SECRET")?;
+        // VAPT M-5: refuse to boot if the two JWT secrets are identical
+        // or too short. Sharing them would let an access token be used
+        // as a refresh token (and vice-versa) once we switch to signed
+        // refreshes. `min_len = 32` mirrors OWASP guidance for HS256.
+        if access_raw == refresh_raw {
+            return Err(ConfigError::Invalid {
+                name: "JWT_SECRET",
+                reason: "JWT_SECRET and JWT_REFRESH_SECRET must be distinct".into(),
+            });
+        }
+        for (name, val) in [
+            ("JWT_SECRET", access_raw.as_str()),
+            ("JWT_REFRESH_SECRET", refresh_raw.as_str()),
+        ] {
+            if val.len() < 32 {
+                return Err(ConfigError::Invalid {
+                    name: match name {
+                        "JWT_SECRET" => "JWT_SECRET",
+                        _ => "JWT_REFRESH_SECRET",
+                    },
+                    reason: format!(
+                        "must be at least 32 bytes (HS256 minimum); got {}",
+                        val.len()
+                    ),
+                });
+            }
+        }
         let jwt = JwtConfig {
-            access_secret: require_secret("JWT_SECRET")?,
-            refresh_secret: require_secret("JWT_REFRESH_SECRET")?,
+            access_secret: SecretString::from(access_raw),
+            refresh_secret: SecretString::from(refresh_raw),
         };
 
         let llm = LlmConfig {

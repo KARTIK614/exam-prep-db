@@ -89,6 +89,29 @@ pub async fn patch_me(
     }
 
     if let Some(email) = req.email.as_deref() {
+        // VAPT M-1: an attacker with a 15-min stolen access token could
+        // previously PATCH the email to their own address and then
+        // trigger /auth/forgot-password to seize the account
+        // permanently. Require the caller to prove ownership by
+        // supplying `current_password` alongside the new email — same
+        // gate we already apply to password changes above.
+        //
+        // If the caller also changed their password in this request the
+        // ownership proof has already been consumed; we still re-verify
+        // against the *pre-change* stored hash below because we loaded
+        // `user` before that write.
+        let current = req
+            .current_password
+            .as_deref()
+            .ok_or_else(|| AppError::BadRequest("current_password required to change email".into()))?;
+        let stored = user
+            .password_hash
+            .as_deref()
+            .ok_or_else(|| AppError::BadRequest("account has no password set".into()))?;
+        if !auth_svc::verify_password(current, stored) {
+            return Err(AppError::Unauthorized);
+        }
+
         // Reject if that address already belongs to a different user.
         let mut rows = state
             .db

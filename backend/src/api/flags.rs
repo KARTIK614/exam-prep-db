@@ -69,6 +69,23 @@ pub async fn flag_question(
         return Err(AppError::NotFound("question"));
     }
 
+    // VAPT H-2: if the caller supplied a test_id, verify they own the
+    // test. Without this check any authed user could spam flags against
+    // arbitrary tests, corrupting admin analytics.
+    if let Some(test_id) = req.test_id {
+        let mut rows = state
+            .db
+            .conn()
+            .query(
+                "SELECT 1 FROM mock_tests WHERE id = ?1 AND user_id = ?2 LIMIT 1",
+                params![test_id, caller.id],
+            )
+            .await?;
+        if rows.next().await?.is_none() {
+            return Err(AppError::Forbidden);
+        }
+    }
+
     // Look up reporter username so admin UI can attribute without a join.
     let mut rows = state
         .db

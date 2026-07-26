@@ -755,7 +755,13 @@ async fn finish_impl(
     let score_pct_rounded = round1(score_pct);
     let raw_marks_rounded = round2(raw_marks);
     let now = Utc::now().to_rfc3339();
-    state
+    // VAPT M-8: two concurrent `/finish` calls previously could both
+    // pass the fast-path status check above and each write error_log +
+    // topic_mastery twice, biasing the second-caller's scores. Scope
+    // the UPDATE to `status != 'completed'`; if the row was already
+    // finalised by the concurrent caller we fall through to the
+    // idempotent-return branch and re-read the persisted values.
+    let updated = state
         .db
         .conn()
         .execute(
@@ -763,7 +769,7 @@ async fn finish_impl(
              SET completed_at = ?1, score = ?2, time_taken_sec = ?3, \
                  raw_marks = ?4, wrong_count = ?5, unanswered_count = ?6, \
                  status = 'completed' \
-             WHERE id = ?7 AND user_id = ?8",
+             WHERE id = ?7 AND user_id = ?8 AND status != 'completed'",
             params![
                 now.clone(),
                 score_pct_rounded,
@@ -776,6 +782,22 @@ async fn finish_impl(
             ],
         )
         .await?;
+    if updated == 0 {
+        // Racing peer finished first — read back the persisted values
+        // and return them, mirroring the idempotent fast-path above.
+        let test = load_test_for_user(state, test.id, auth.id).await?;
+        let breakdown = load_topic_breakdown(state, auth, test.id).await?;
+        return Ok(FinishResponse {
+            test_id: test.id,
+            correct: correct_from(&test),
+            wrong: test.wrong_count.unwrap_or(0),
+            unanswered: test.unanswered_count.unwrap_or(0),
+            score_pct: test.score.unwrap_or(0.0),
+            raw_marks: test.raw_marks.unwrap_or(0.0),
+            negative_ratio: test.negative_ratio.unwrap_or(0.0),
+            breakdown_by_topic: breakdown,
+        });
+    }
 
     // Update in-memory copy so return-path uses fresh values.
     test.status = Some("completed".into());

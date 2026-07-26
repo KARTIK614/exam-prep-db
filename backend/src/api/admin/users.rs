@@ -57,12 +57,20 @@ pub async fn list_users(
 
 pub async fn patch_user(
     State(state): State<AppState>,
-    RequireAdmin(_): RequireAdmin,
+    RequireAdmin(caller): RequireAdmin,
     Path(id): Path<i64>,
     Json(patch): Json<AdminUserPatchRequest>,
 ) -> Result<Json<User>, AppError> {
     if patch.role.is_none() && patch.is_active.is_none() {
         return Err(AppError::BadRequest("empty patch".into()));
+    }
+    // VAPT C-2: an admin must not use this endpoint to modify their
+    // own row. Any self-change (rotate password, change email, etc.)
+    // has to go through the ownership-proving /me flow. A compromised
+    // admin token was previously able to promote arbitrary users OR
+    // lock every other admin out of the system through this path.
+    if id == caller.id {
+        return Err(AppError::Forbidden);
     }
     if let Some(role) = patch.role.as_deref() {
         if !matches!(role, "admin" | "user") {

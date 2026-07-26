@@ -51,9 +51,15 @@ pub async fn get_stats(
     State(state): State<AppState>,
     RequireAdmin(_): RequireAdmin,
 ) -> Result<Json<AdminStatsResponse>, AppError> {
-    let flags_open =
-        count(&state, "SELECT COUNT(*) FROM flags WHERE status = 'open'").await?;
-    let flags_total = count(&state, "SELECT COUNT(*) FROM flags").await?;
+    // NB: table is `question_flags` (matches the FE flag-submit path
+    // and every other admin query). The earlier `flags` alias in this
+    // file 500'd the dashboard the moment an admin loaded it.
+    let flags_open = count(
+        &state,
+        "SELECT COUNT(*) FROM question_flags WHERE status = 'open'",
+    )
+    .await?;
+    let flags_total = count(&state, "SELECT COUNT(*) FROM question_flags").await?;
     let questions = count(
         &state,
         "SELECT COUNT(*) FROM questions WHERE (disabled IS NULL OR disabled = 0)",
@@ -93,7 +99,7 @@ pub async fn get_stats(
     // recent_flags — join to questions for the FE preview snippet.
     let flag_sql = "SELECT f.id, f.question_id, f.category, f.note, f.created_at, \
                            q.question_text \
-                    FROM flags f \
+                    FROM question_flags f \
                     LEFT JOIN questions q ON q.id = f.question_id \
                     ORDER BY f.created_at DESC \
                     LIMIT 5";

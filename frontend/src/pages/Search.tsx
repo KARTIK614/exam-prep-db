@@ -17,10 +17,23 @@ import { useTopics } from '@/lib/api/topics';
 
 /**
  * Search — R4 §3.3 `GET /search`. Full-page FTS5 search with debounced
- * query + filters. Snippets from the API are HTML-escaped so we render
- * them via `dangerouslySetInnerHTML` after the backend has already
- * highlighted matches with `<mark>` tags (per Flask precedent).
+ * query + filters. Backend snippets carry `<mark>...</mark>` markers
+ * around matches but the surrounding `question_text` is admin-supplied
+ * arbitrary content — passing it to `dangerouslySetInnerHTML` was a
+ * stored-XSS foothold (VAPT H-7). We now split on the `<mark>` markers
+ * and render as React nodes so any tag characters in the source
+ * question are escaped by React's default text renderer.
  */
+function renderSnippet(snippet: string) {
+  // The backend emits either `<mark>hit</mark>` (FTS5 default) or the
+  // `compute_like_snippet` LIKE fallback with identical markers. Split
+  // on the tag boundary, keep the tag content so we can highlight it.
+  const parts = snippet.split(/<\/?mark>/g);
+  return parts.map((chunk, i) => (i % 2 === 0
+    ? <span key={i}>{chunk}</span>
+    : <mark key={i}>{chunk}</mark>
+  ));
+}
 export default function Search() {
   const [params, setParams] = useSearchParams();
   const [q, setQ] = useState(params.get('q') ?? '');
@@ -157,13 +170,9 @@ export default function Search() {
                 <div className="text-xs text-muted-foreground">
                   Q#{hit.id} · {hit.difficulty ?? '—'}
                 </div>
-                <div
-                  className="mt-1 text-sm"
-                  // Backend produces `<mark>`-highlighted snippet HTML.
-                  dangerouslySetInnerHTML={{
-                    __html: hit.snippet || hit.question_text || '',
-                  }}
-                />
+                <div className="mt-1 text-sm">
+                  {renderSnippet(hit.snippet || hit.question_text || '')}
+                </div>
               </li>
             ))}
           </ul>

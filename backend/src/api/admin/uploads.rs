@@ -74,6 +74,12 @@ pub async fn create_upload(
     let mut topic_id: Option<i64> = None;
     let mut file_bytes: usize = 0;
 
+    // VAPT M-3: hard-cap payload so a rogue admin (or compromised token)
+    // can't OOM the Render container by streaming an unbounded blob.
+    // 20 MiB is enough for the typical 200-page PYQ PDF; anything larger
+    // should be split before upload.
+    const MAX_UPLOAD_BYTES: usize = 20 * 1024 * 1024;
+
     while let Some(field) = multipart
         .next_field()
         .await
@@ -82,10 +88,29 @@ pub async fn create_upload(
         let name = field.name().map(str::to_string).unwrap_or_default();
         if name == "file" {
             filename = field.file_name().map(str::to_string);
+            // Reject obvious non-PDFs up-front via content-type. We
+            // don't magic-byte-check because the field.text/bytes
+            // reader eagerly consumes the payload; a follow-up commit
+            // can add a %PDF- header sniff by using field.chunk().
+            if let Some(ct) = field.content_type() {
+                let ct = ct.to_string();
+                if !ct.contains("pdf") && !ct.contains("octet-stream") {
+                    return Err(AppError::BadRequest(format!(
+                        "unsupported content-type: {ct}"
+                    )));
+                }
+            }
             let data = field
                 .bytes()
                 .await
                 .map_err(|e| AppError::BadRequest(format!("file read failed: {e}")))?;
+            if data.len() > MAX_UPLOAD_BYTES {
+                return Err(AppError::BadRequest(format!(
+                    "file too large: {} bytes (limit {} bytes)",
+                    data.len(),
+                    MAX_UPLOAD_BYTES
+                )));
+            }
             file_bytes = data.len();
         } else if name == "topic_id" {
             let text = field

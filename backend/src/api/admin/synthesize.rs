@@ -37,12 +37,48 @@ const MODEL_NAME: &str = "deepseek-chat";
 
 pub async fn start_batch(
     State(state): State<AppState>,
-    RequireAdmin(_): RequireAdmin,
+    RequireAdmin(caller): RequireAdmin,
     Json(req): Json<AdminSynthesizeRequest>,
 ) -> Result<(StatusCode, Json<AdminSynthesizeResponse>), AppError> {
     if req.n_requested == 0 || req.n_requested > 50 {
         return Err(AppError::BadRequest(
             "n_requested must be between 1 and 50".into(),
+        ));
+    }
+
+    // VAPT H-5: cap the number of generations a single admin can
+    // schedule in a rolling 24h window. The route-level rate-limit is
+    // IP-scoped and does not defend against a stolen admin token behind
+    // a proxy rotation. 200 generations/day = ~$X ceiling on DeepSeek
+    // spend; adjust if the batch-size hard cap moves off 50.
+    const DAILY_GEN_CAP_PER_ADMIN: i64 = 200;
+    let mut rows = state
+        .db
+        .conn()
+        .query(
+            "SELECT COALESCE(SUM(n_requested), 0) FROM synthesis_batches \
+             WHERE user_id = ?1 \
+               AND datetime(generated_at) >= datetime('now', '-1 day')",
+            params![caller.id],
+        )
+        .await?;
+    let used_today: i64 = match rows.next().await? {
+        Some(row) => row.get::<i64>(0).unwrap_or(0),
+        None => 0,
+    };
+    if used_today + req.n_requested as i64 > DAILY_GEN_CAP_PER_ADMIN {
+        return Ok((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(AdminSynthesizeResponse {
+                batch_id: 0,
+                topic_id: req.topic_id,
+                n_requested: req.n_requested,
+                status: "rejected".into(),
+                cap_message: Some(format!(
+                    "daily per-admin synthesis cap {DAILY_GEN_CAP_PER_ADMIN} \
+                     reached ({used_today} used in last 24h)"
+                )),
+            }),
         ));
     }
 
@@ -77,8 +113,8 @@ pub async fn start_batch(
 
     // Insert the batch row up-front so the FE can poll.
     let sql = "INSERT INTO synthesis_batches \
-        (topic_id, generated_at, n_requested, n_generated, prompt_hash, model, status) \
-        VALUES (?, ?, ?, 0, ?, ?, 'pending') \
+        (topic_id, generated_at, n_requested, n_generated, prompt_hash, model, status, user_id) \
+        VALUES (?, ?, ?, 0, ?, ?, 'pending', ?) \
         RETURNING id";
     let mut rows = state
         .db
@@ -91,6 +127,7 @@ pub async fn start_batch(
                 req.n_requested as i64,
                 prompt_hash,
                 MODEL_NAME.to_string(),
+                caller.id,
             ],
         )
         .await?;

@@ -13,6 +13,14 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::json;
 
+tokio::task_local! {
+    /// Per-request identifier stitched in by the request-id middleware so
+    /// `IntoResponse` can echo it into the error envelope. If the caller
+    /// never entered a scoped middleware (e.g. background job), reading
+    /// returns `None` and the envelope keeps `"request_id": null`.
+    pub static REQUEST_ID: String;
+}
+
 /// Errors that can propagate out of any handler.
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
@@ -111,14 +119,19 @@ impl IntoResponse for AppError {
             tracing::warn!(error = %self, status = %status, "handler error");
         }
 
-        // request_id is stitched in by the request-id middleware; if the
-        // caller wants it exposed on the wire they can read the header.
-        // We include a placeholder key so the envelope shape is stable.
+        // Echo the request id into the envelope when the request-id
+        // middleware scoped this task. Falls back to `null` outside a
+        // request (e.g. background jobs, unit tests).
+        let request_id = REQUEST_ID
+            .try_with(|v| v.clone())
+            .ok()
+            .map(serde_json::Value::from)
+            .unwrap_or(serde_json::Value::Null);
         let body = Json(json!({
             "error": {
                 "code": code,
                 "message": self.public_message(),
-                "request_id": null,
+                "request_id": request_id,
             }
         }));
 

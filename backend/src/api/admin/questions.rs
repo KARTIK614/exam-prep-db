@@ -189,6 +189,16 @@ pub async fn bulk_toggle_disabled(
             disabled: req.disabled,
         }));
     }
+    // VAPT M-4: hard-cap the input so a runaway admin script (or a
+    // compromised admin token) can't lock the DB behind a 1M-row IN().
+    const MAX_BULK_IDS: usize = 5_000;
+    if req.ids.len() > MAX_BULK_IDS {
+        return Err(AppError::BadRequest(format!(
+            "too many ids: {} (limit {})",
+            req.ids.len(),
+            MAX_BULK_IDS
+        )));
+    }
     // Chunk into batches of 200 to stay under the parameter-count limit.
     let disabled_int = bool_to_int(req.disabled);
     let now = Utc::now().to_rfc3339();

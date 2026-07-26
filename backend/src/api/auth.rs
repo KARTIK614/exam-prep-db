@@ -208,6 +208,14 @@ pub async fn register(
 
 // ---------- POST /auth/login ----------------------------------------------
 
+/// Per-user login lockout thresholds (VAPT H-4). We cap consecutive
+/// failures at `LOCKOUT_THRESHOLD` and refuse further attempts for
+/// `LOCKOUT_MINUTES` regardless of password correctness. This is per
+/// username (not per IP) so an attacker rotating IPs still gets locked
+/// out after a handful of failed guesses per account.
+const LOCKOUT_THRESHOLD: i64 = 5;
+const LOCKOUT_MINUTES: i64 = 15;
+
 pub async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginRequest>,
@@ -221,13 +229,68 @@ pub async fn login(
     if !user.is_active {
         return Err(AppError::Unauthorized);
     }
+
+    // Lockout check. `locked_until > now()` → 401 without touching the
+    // password hash (also spares us the argon2 CPU cost during an attack).
+    if let Some(until) = user.locked_until.as_deref() {
+        if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(until) {
+            if parsed.with_timezone(&Utc) > Utc::now() {
+                tracing::warn!(
+                    user_id = user.id,
+                    locked_until = %until,
+                    "login refused: account is locked"
+                );
+                return Err(AppError::Unauthorized);
+            }
+        }
+    }
+
     let Some(stored_hash) = user.password_hash.as_deref() else {
         return Err(AppError::Unauthorized);
     };
     if !auth_svc::verify_password(&req.password, stored_hash) {
+        // Bump the counter; lock if threshold reached.
+        let new_count = user.failed_login_count.saturating_add(1);
+        if new_count >= LOCKOUT_THRESHOLD {
+            let until = (Utc::now() + Duration::minutes(LOCKOUT_MINUTES)).to_rfc3339();
+            let _ = state
+                .db
+                .conn()
+                .execute(
+                    "UPDATE users SET failed_login_count = ?1, locked_until = ?2 \
+                     WHERE id = ?3",
+                    params![new_count, until.clone(), user.id],
+                )
+                .await;
+            tracing::warn!(
+                user_id = user.id,
+                threshold = LOCKOUT_THRESHOLD,
+                until = %until,
+                "account locked after repeated failed logins"
+            );
+        } else {
+            let _ = state
+                .db
+                .conn()
+                .execute(
+                    "UPDATE users SET failed_login_count = ?1 WHERE id = ?2",
+                    params![new_count, user.id],
+                )
+                .await;
+        }
         return Err(AppError::Unauthorized);
     }
 
+    // Success — clear failure state.
+    let _ = state
+        .db
+        .conn()
+        .execute(
+            "UPDATE users SET failed_login_count = 0, locked_until = NULL \
+             WHERE id = ?1",
+            params![user.id],
+        )
+        .await;
     update_last_login(&state, user.id).await?;
     let tokens = issue_tokens(&state, &user).await?;
     Ok(Json(tokens))
@@ -318,6 +381,10 @@ pub async fn forgot_password(
     if let Some(row) = rows.next().await? {
         let user = User::from_row(&row)?;
         let token = auth_svc::generate_reset_token();
+        // Store only the sha256 — the plaintext is emailed to the user
+        // and never sits in the DB. Anyone with log/DB access thus can't
+        // hijack a pending reset (VAPT C-1).
+        let token_hash = auth_svc::hash_refresh_token(&token);
         let expires = (Utc::now() + Duration::hours(1)).to_rfc3339();
 
         state
@@ -327,17 +394,17 @@ pub async fn forgot_password(
                 "UPDATE users SET password_reset_token = ?1, \
                                     password_reset_expires_at = ?2 \
                  WHERE id = ?3",
-                params![token.clone(), expires, user.id],
+                params![token_hash, expires, user.id],
             )
             .await?;
 
         // TODO(email): send this via Resend / Postmark once SMTP is wired
-        // (see docs/plans/v3-R5-migration-deploy.md). Until then, log the
-        // reset URL so a dev can pull it out of the container logs.
+        // (see docs/plans/v3-R5-migration-deploy.md). Deliberately do NOT
+        // log the plaintext token — VAPT C-1. Ops can trigger a fresh
+        // reset locally for a specific email if needed.
         tracing::info!(
             user_id = user.id,
-            reset_token = %token,
-            "password reset requested — TODO: email via Resend when SMTP configured"
+            "password reset requested — token hashed; email delivery pending SMTP wiring"
         );
     } else {
         // Do NOT reveal whether the email exists. Log at debug so
@@ -363,14 +430,16 @@ pub async fn reset_password(
     req.validate()
         .map_err(|e| AppError::BadRequest(format!("validation: {e}")))?;
 
-    // Find the user whose reset token matches. Reset tokens are stored
-    // as-is (they're already high-entropy random strings; hashing adds
-    // no security here because they're one-shot and short-lived).
+    // Reset tokens are stored as sha256 hashes (VAPT C-1). The
+    // path-parameter carries the plaintext token from the email; hash
+    // and compare in constant enough time (SQL equality on a fixed-
+    // length hex string is fine).
+    let token_hash = auth_svc::hash_refresh_token(&token);
     let sql = format!(
         "SELECT {} FROM users WHERE password_reset_token = ?1 LIMIT 1",
         User::COLUMNS.join(", ")
     );
-    let mut rows = state.db.conn().query(&sql, params![token.clone()]).await?;
+    let mut rows = state.db.conn().query(&sql, params![token_hash]).await?;
     let user = match rows.next().await? {
         Some(row) => User::from_row(&row)?,
         None => return Err(AppError::BadRequest("invalid or expired reset token".into())),

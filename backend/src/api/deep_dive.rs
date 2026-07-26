@@ -27,7 +27,7 @@ use crate::services::gemini;
 
 pub async fn deep_dive(
     State(state): State<AppState>,
-    RequireAuth(_): RequireAuth,
+    RequireAuth(caller): RequireAuth,
     Path(qid): Path<i64>,
     body: Option<Json<DeepDiveRequest>>,
 ) -> Result<Json<DeepDiveResponse>, AppError> {
@@ -37,9 +37,29 @@ pub async fn deep_dive(
         .map(|t| t.to_string())
         .unwrap_or_default();
 
-    // Cache probe — cheap round-trip, returns the whole response body when
-    // hit.
-    let cache_key = format!("deep_dive:{qid}:{test_id_str}");
+    // VAPT H-1: the Gemini prompt is seeded with the correct answer +
+    // canonical explanation, so returning it before the user has been
+    // served this question re-introduces the F01 answer leak via a side
+    // channel. Require that the caller has an existing `test_responses`
+    // row for `(user_id, question_id)` — i.e., the question has been
+    // included in one of their tests, and (by F62) they've either
+    // finished it or explicitly opted in.
+    let mut rows = state
+        .db
+        .conn()
+        .query(
+            "SELECT 1 FROM test_responses \
+             WHERE user_id = ?1 AND question_id = ?2 LIMIT 1",
+            params![caller.id, qid],
+        )
+        .await?;
+    if rows.next().await?.is_none() {
+        return Err(AppError::Forbidden);
+    }
+
+    // Cache key is now user-scoped so a leaked cache row can't be
+    // replayed to a fresh user before they've attempted the question.
+    let cache_key = format!("deep_dive:{}:{qid}:{test_id_str}", caller.id);
     if let Some(body) = load_cache(&state, &cache_key).await? {
         match serde_json::from_str::<DeepDiveResponse>(&body) {
             Ok(mut resp) => {
