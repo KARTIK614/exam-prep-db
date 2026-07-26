@@ -48,11 +48,17 @@ pub struct ReviewQueueQuery {
 }
 
 #[derive(Debug, Serialize)]
-pub struct ReviewQueueResponse {
-    /// Total cards where `date(sr_due_at) <= date('now')`.
+pub struct ReviewQueueSummary {
     pub due_today: i64,
-    /// Card counts per Leitner box (index 0 = box 1, .. index 4 = box 5).
-    pub by_box: [i64; 5],
+    pub due_tomorrow: i64,
+    /// Card counts per Leitner box, keyed by the box number as a string
+    /// ("1".."5") so it fits the FE `Record<string, number>` contract.
+    pub by_box: std::collections::BTreeMap<String, i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReviewQueueResponse {
+    pub summary: ReviewQueueSummary,
     pub cards: Vec<ReviewCard>,
 }
 

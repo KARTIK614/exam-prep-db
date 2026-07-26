@@ -167,7 +167,7 @@ pub async fn mastery(
             subject,
             paper,
             weightage,
-            current_score,
+            current_score: current_score.unwrap_or(0.0),
             tier,
             days_since_studied,
             test_count,
@@ -488,18 +488,23 @@ pub async fn consistency(
         .min(100.0) as i64;
 
     // Activity strip: index 0 = 27 days ago, index 27 = today.
-    let mut strip: Vec<bool> = Vec::with_capacity(days_window as usize);
+    let mut activity: Vec<crate::schemas::analytics::ActivityCell> =
+        Vec::with_capacity(days_window as usize);
     for i in 0..days_window {
         let d = start + Duration::days(i);
         let key = d.format("%Y-%m-%d").to_string();
-        strip.push(active.contains(&key));
+        let has = active.contains(&key);
+        activity.push(crate::schemas::analytics::ActivityCell {
+            date: key,
+            has_activity: has,
+        });
     }
 
     // Streak: consecutive active days ending TODAY (walk back from the
     // tail; stop at the first inactive slot).
     let mut streak_days: i64 = 0;
-    for is_active in strip.iter().rev() {
-        if *is_active {
+    for cell in activity.iter().rev() {
+        if cell.has_activity {
             streak_days += 1;
         } else {
             break;
@@ -511,7 +516,7 @@ pub async fn consistency(
         active_days_28,
         denominator,
         streak_days,
-        activity_strip: strip,
+        activity,
     }))
 }
 
@@ -606,14 +611,10 @@ pub async fn next_weak_topic(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    let mut iter = scored.into_iter().map(|(_, e)| e);
-    let top_topic = iter.next();
-    let alternatives: Vec<NextTopicEntry> = iter.take(2).collect();
+    let next_topics: Vec<NextTopicEntry> =
+        scored.into_iter().map(|(_, e)| e).take(3).collect();
 
-    Ok(Json(NextWeakTopicResponse {
-        top_topic,
-        alternatives,
-    }))
+    Ok(Json(NextWeakTopicResponse { next_topics }))
 }
 
 /// Row fed to `score_topic`. Not on the wire — pure in-memory shape.
@@ -652,6 +653,7 @@ fn score_topic(t: &TopicScoringRow, target: f64) -> (f64, NextTopicEntry) {
                 weightage,
                 reason_str: format!("untested · {weightage} exam pts if mastered"),
                 exam_points_at_stake: weightage as f64,
+                next_score: None,
             },
         );
     }
@@ -666,6 +668,7 @@ fn score_topic(t: &TopicScoringRow, target: f64) -> (f64, NextTopicEntry) {
                 weightage,
                 reason_str: String::new(),
                 exam_points_at_stake: 0.0,
+                next_score: Some(current),
             },
         );
     }
@@ -687,6 +690,7 @@ fn score_topic(t: &TopicScoringRow, target: f64) -> (f64, NextTopicEntry) {
                 weightage,
                 reason_str: String::new(),
                 exam_points_at_stake: 0.0,
+                next_score: Some(current),
             },
         );
     }
@@ -707,6 +711,7 @@ fn score_topic(t: &TopicScoringRow, target: f64) -> (f64, NextTopicEntry) {
             weightage,
             reason_str: reason,
             exam_points_at_stake: est_points,
+            next_score: Some(current),
         },
     )
 }
@@ -940,11 +945,13 @@ pub async fn error_dist(
 pub struct PaperPerfItem {
     pub paper: String,
     pub avg_score: f64,
+    #[serde(rename = "tests")]
     pub test_count: i64,
 }
 
 #[derive(Debug, serde::Serialize)]
 pub struct PaperPerfResponse {
+    #[serde(rename = "by_paper")]
     pub items: Vec<PaperPerfItem>,
 }
 

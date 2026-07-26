@@ -193,9 +193,36 @@ pub async fn get_queue(
         });
     }
 
+    // due_tomorrow: cards with date(sr_due_at) = date('now', '+1 day').
+    let due_tomorrow_sql = "SELECT COUNT(*) FROM error_log el \
+                            JOIN questions q ON q.id = el.question_id \
+                            WHERE el.user_id = ?1 \
+                              AND (q.disabled IS NULL OR q.disabled = 0) \
+                              AND date(el.sr_due_at) = date('now', '+1 day')";
+    let due_tomorrow: i64 = match state
+        .db
+        .conn()
+        .query(due_tomorrow_sql, params![auth.id])
+        .await
+    {
+        Ok(mut rows) => match rows.next().await {
+            Ok(Some(row)) => row.get::<i64>(0).unwrap_or(0),
+            _ => 0,
+        },
+        Err(_) => 0,
+    };
+
+    let mut by_box_map = std::collections::BTreeMap::new();
+    for (i, count) in by_box.iter().enumerate() {
+        by_box_map.insert((i + 1).to_string(), *count);
+    }
+
     Ok(Json(ReviewQueueResponse {
-        due_today,
-        by_box,
+        summary: crate::schemas::review::ReviewQueueSummary {
+            due_today,
+            due_tomorrow,
+            by_box: by_box_map,
+        },
         cards,
     }))
 }

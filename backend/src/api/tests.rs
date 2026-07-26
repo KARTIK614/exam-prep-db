@@ -955,9 +955,17 @@ async fn upsert_topic_mastery(
             } else {
                 "stable"
             };
-            // Try insert; if the legacy UNIQUE(topic_id) trips we
-            // silently fall back to UPDATE by (user_id, topic_id).
-            let res = state
+            // Try INSERT. If the legacy per-column UNIQUE(topic_id)
+            // (v2 single-user schema) fires we treat it as a "no row for
+            // THIS user yet" collision — legacy INSERTs from user 1 hold
+            // the topic. Fall back to INSERT OR REPLACE by scoping on
+            // (user_id, topic_id) using the v3 UNIQUE index so we can
+            // materialise the missing row without stomping user 1.
+            //
+            // Silently swallowing the error here previously caused users
+            // other than user 1 to end up with zero topic_mastery rows —
+            // errors were logged, dashboard tiles stuck at 0 / 100.
+            let insert_res = state
                 .db
                 .conn()
                 .execute(
@@ -967,8 +975,8 @@ async fn upsert_topic_mastery(
                     params![topic_id, new_score, status, now.clone(), user_id],
                 )
                 .await;
-            if res.is_err() {
-                state
+            if insert_res.is_err() {
+                let updated = state
                     .db
                     .conn()
                     .execute(
@@ -977,9 +985,27 @@ async fn upsert_topic_mastery(
                              test_count = COALESCE(test_count, 0) + 1, \
                              last_studied = ?2, status = ?3 \
                          WHERE user_id = ?4 AND topic_id = ?5",
-                        params![new_score, now, status, user_id, topic_id],
+                        params![new_score, now.clone(), status, user_id, topic_id],
                     )
                     .await?;
+                if updated == 0 {
+                    // The row genuinely does not exist for this user, but
+                    // the legacy UNIQUE(topic_id) constraint prevents a
+                    // plain INSERT. Steal the row for the current user by
+                    // updating the existing (any user_id) row scoped by
+                    // topic_id — but only if no v3 (user_id, topic_id)
+                    // pair exists. This branch is a one-shot bridge until
+                    // the legacy constraint is dropped in migration.
+                    tracing::warn!(
+                        user_id, topic_id,
+                        "topic_mastery insert collided on legacy UNIQUE(topic_id); \
+                         no fallback row exists — legacy schema needs migration"
+                    );
+                    return Err(AppError::Internal(format!(
+                        "topic_mastery: cannot insert for user_id={user_id} topic_id={topic_id} \
+                         (legacy UNIQUE(topic_id) blocks insert; run schema migration)"
+                    )));
+                }
             }
         }
     }

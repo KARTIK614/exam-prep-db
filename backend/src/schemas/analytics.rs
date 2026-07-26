@@ -20,12 +20,14 @@ use serde::Serialize;
 #[derive(Debug, Serialize)]
 pub struct MasteryTile {
     pub topic_id: i64,
+    #[serde(rename = "name")]
     pub topic_name: Option<String>,
     pub subject: Option<String>,
     pub paper: Option<String>,
     pub weightage: i64,
-    pub current_score: Option<f64>,
+    pub current_score: f64,
     pub tier: &'static str,
+    #[serde(rename = "days_since")]
     pub days_since_studied: Option<i64>,
     pub test_count: i64,
 }
@@ -74,20 +76,20 @@ pub struct HeatmapResponse {
 /// instead of the pre-rendered activity dict. Active day = a completed
 /// `mock_test` OR a `study_session` with `duration_min >= 10`.
 #[derive(Debug, Serialize)]
+pub struct ActivityCell {
+    pub date: String,
+    pub has_activity: bool,
+}
+
+#[derive(Debug, Serialize)]
 pub struct ConsistencyResponse {
-    /// 0..100. `min(100, round(active_days_28 * (100 / denominator)))`.
+    #[serde(rename = "score")]
     pub score_pct: i64,
-    /// Number of unique dates in the last 28 days with any qualifying
-    /// activity.
+    #[serde(rename = "active_days")]
     pub active_days_28: i64,
-    /// Fixed at 20 — 5 study days/week hits 100 %.
     pub denominator: i64,
-    /// Longest tail of consecutive active days ending "today". `0` if
-    /// today itself is inactive.
     pub streak_days: i64,
-    /// 28-length array of booleans, one per date in the window. Index 0
-    /// = 27 days ago, index 27 = today.
-    pub activity_strip: Vec<bool>,
+    pub activity: Vec<ActivityCell>,
 }
 
 // ---------- GET /analytics/next-weak-topic --------------------------------
@@ -98,22 +100,15 @@ pub struct NextTopicEntry {
     pub topic_id: i64,
     pub name: Option<String>,
     pub weightage: i64,
-    /// Human-readable "why this topic" string (matches `_score_topic`'s
-    /// `reason` field in `bp_main.py`).
+    #[serde(rename = "reason")]
     pub reason_str: String,
-    /// Rough "exam points if you master this" estimate. For untested
-    /// topics this is `weightage` (full weightage on the table); for
-    /// scored topics it's `(gap / 100) * weightage` rounded to 1 dp.
     pub exam_points_at_stake: f64,
+    pub next_score: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct NextWeakTopicResponse {
-    /// Highest-scoring topic. `None` when every topic is already at or
-    /// above target and studied recently.
-    pub top_topic: Option<NextTopicEntry>,
-    /// Up to 2 more entries after `top_topic`, ranked by score DESC.
-    pub alternatives: Vec<NextTopicEntry>,
+    pub next_topics: Vec<NextTopicEntry>,
 }
 
 // ---------- GET /analytics/pacing -----------------------------------------
