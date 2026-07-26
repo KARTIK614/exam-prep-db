@@ -42,6 +42,7 @@ pub mod analytics;
 pub mod auth;
 pub mod bookmarks;
 pub mod deep_dive;
+pub mod errors;
 pub mod exam_presets;
 pub mod flags;
 pub mod health;
@@ -50,6 +51,8 @@ pub mod pagination;
 pub mod questions;
 pub mod review;
 pub mod search;
+pub mod settings;
+pub mod tests;
 pub mod topics;
 
 /// Application state passed to every handler via `axum::extract::State`.
@@ -154,6 +157,21 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/analytics/pacing", get(analytics::pacing))
         .route("/analytics/error-dist", get(analytics::error_dist))
+        .route("/analytics/paper-performance", get(analytics::paper_performance))
+        // --- errors (recent wrong answers) -------------------------
+        .route("/errors", get(errors::list_errors))
+        // --- user settings -----------------------------------------
+        .route(
+            "/me/settings",
+            get(settings::get_settings).patch(settings::patch_settings),
+        )
+        // --- tests / test-taking (Phase 5) -------------------------
+        .route("/tests", post(tests::create_test).get(tests::list_tests))
+        .route("/tests/{id}", get(tests::get_test))
+        .route("/tests/{id}/answers", post(tests::submit_answer))
+        .route("/tests/{id}/mark-for-review", post(tests::mark_for_review))
+        .route("/tests/{id}/finish", post(tests::finish))
+        .route("/tests/{id}/results", get(tests::get_results))
         // --- review / SRS (Phase 6) --------------------------------
         .route("/review/queue", get(review::get_queue))
         .route(

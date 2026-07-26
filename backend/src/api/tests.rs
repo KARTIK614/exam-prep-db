@@ -28,6 +28,7 @@ use std::collections::{HashMap, HashSet};
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use axum::Json;
 use chrono::Utc;
 use libsql::params;
@@ -213,7 +214,7 @@ pub async fn create_test(
     State(state): State<AppState>,
     RequireAuth(auth): RequireAuth,
     Json(req): Json<CreateTestRequest>,
-) -> Result<(StatusCode, Json<CreateTestResponse>), AppError> {
+) -> Result<Json<CreateTestResponse>, AppError> {
     let test_mode = validate_test_mode(&req.test_mode)?;
     let difficulty = validate_difficulty(req.difficulty.as_deref())?;
     let negative_ratio = resolve_negative_ratio(
@@ -279,10 +280,16 @@ pub async fn create_test(
     // huge candidate sets, but the biggest topic bucket in the db
     // right now is ~500 rows — a Fisher-Yates shuffle on that is
     // cheap.
-    use rand::seq::SliceRandom;
-    let mut rng = rand::thread_rng();
-    candidate_ids.shuffle(&mut rng);
-    let taken: Vec<i64> = candidate_ids.into_iter().take(want).collect();
+    //
+    // Scope the RNG so it's dropped before any await — `ThreadRng` is
+    // `!Send`, which would otherwise make the whole Future !Send and
+    // break axum's Handler bound.
+    let taken: Vec<i64> = {
+        use rand::seq::SliceRandom;
+        let mut rng = rand::thread_rng();
+        candidate_ids.shuffle(&mut rng);
+        candidate_ids.into_iter().take(want).collect()
+    };
 
     // Insert the mock_tests row. We do NOT store the question_ids
     // list on this row — resume-later uses a `test_questions` join
@@ -339,15 +346,12 @@ pub async fn create_test(
             .await;
     }
 
-    Ok((
-        StatusCode::CREATED,
-        Json(CreateTestResponse {
-            test_id,
-            question_ids: taken,
-            test_mode,
-            negative_ratio,
-        }),
-    ))
+    Ok(Json(CreateTestResponse {
+        test_id,
+        question_ids: taken,
+        test_mode,
+        negative_ratio,
+    }))
 }
 
 // ---------- GET /tests/{id} ------------------------------------------------
@@ -761,7 +765,7 @@ async fn finish_impl(
                  status = 'completed' \
              WHERE id = ?7 AND user_id = ?8",
             params![
-                now,
+                now.clone(),
                 score_pct_rounded,
                 time_taken as i64,
                 raw_marks_rounded,

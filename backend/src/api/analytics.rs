@@ -928,3 +928,43 @@ pub async fn error_dist(
 
     Ok(Json(ErrorDistResponse { by_topic, by_type }))
 }
+
+// ---------- GET /api/v1/analytics/paper-performance ------------------------
+
+/// Per-paper average score + test count for the current user.
+///
+/// Frontend Dashboard renders a small "Paper I / Paper II" card. If the
+/// user has no completed tests yet the response is `{ items: [] }` and
+/// the FE shows an empty-state.
+#[derive(Debug, serde::Serialize)]
+pub struct PaperPerfItem {
+    pub paper: String,
+    pub avg_score: f64,
+    pub test_count: i64,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct PaperPerfResponse {
+    pub items: Vec<PaperPerfItem>,
+}
+
+pub async fn paper_performance(
+    State(state): State<AppState>,
+    RequireAuth(auth): RequireAuth,
+) -> Result<Json<PaperPerfResponse>, AppError> {
+    let sql = "SELECT paper, AVG(score) AS avg_score, COUNT(*) AS n \
+               FROM mock_tests \
+               WHERE user_id = ?1 AND status = 'completed' AND paper IS NOT NULL \
+               GROUP BY paper \
+               ORDER BY paper";
+    let mut rows = state.db.conn().query(sql, params![auth.id]).await?;
+    let mut items = Vec::new();
+    while let Some(row) = rows.next().await? {
+        let paper = value_to_opt_string(row.get_value(0).unwrap_or(libsql::Value::Null))
+            .unwrap_or_else(|| "?".into());
+        let avg_score = row.get::<f64>(1).unwrap_or(0.0);
+        let test_count = row.get::<i64>(2).unwrap_or(0);
+        items.push(PaperPerfItem { paper, avg_score, test_count });
+    }
+    Ok(Json(PaperPerfResponse { items }))
+}

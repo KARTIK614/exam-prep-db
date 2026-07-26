@@ -9,6 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import { DeepDiveButton } from '@/components/DeepDiveButton';
 import { useTestResults } from '@/lib/api/tests';
 import { cn } from '@/lib/utils/cn';
 
@@ -215,6 +216,7 @@ export default function TestResults() {
                       {q.explanation}
                     </div>
                   ) : null}
+                  <DeepDiveButton questionId={q.question_id} />
                 </div>
               );
             })
