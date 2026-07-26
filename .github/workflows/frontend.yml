@@ -1,0 +1,64 @@
+name: frontend-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend.yml'
+  pull_request:
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend.yml'
+
+jobs:
+  check:
+    name: typecheck + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: typecheck
+        run: pnpm exec tsc --noEmit
+
+      - name: build
+        run: pnpm build
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+
+      - name: Upload dist artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist-${{ github.sha }}
+          path: frontend/dist
+          retention-days: 7
+
+  deploy:
+    name: trigger Vercel deploy
+    runs-on: ubuntu-latest
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Trigger Vercel deploy hook
+        if: env.VERCEL_DEPLOY_HOOK_FRONTEND != ''
+        env:
+          VERCEL_DEPLOY_HOOK_FRONTEND: ${{ secrets.VERCEL_DEPLOY_HOOK_FRONTEND }}
+        run: |
+          curl -fsSL -X POST "$VERCEL_DEPLOY_HOOK_FRONTEND"

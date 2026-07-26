@@ -1,0 +1,22 @@
+# Build artefacts and cache
+target/
+**/target/
+
+# VCS
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Docs, meta, tests (build doesn't need them)
+README.md
+tests/
+docs/
+
+# Local env — MUST NOT be baked into the image
+.env
+.env.*
+!.env.example

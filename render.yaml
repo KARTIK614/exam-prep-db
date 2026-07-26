@@ -23,3 +23,42 @@ services:
       # Optional — cookie Secure flag (defaults to on when RENDER is set)
       - key: COOKIE_SECURE
         value: "1"
+
+  # ─── v3 Rust backend ────────────────────────────────────────────────
+  # Coexists with the Flask service during migration. Kill Flask (above)
+  # after cutover per docs/plans/FLASK_RETIREMENT.md.
+  - type: web
+    name: exam-prep-backend
+    env: docker
+    plan: starter
+    dockerfilePath: backend/Dockerfile
+    dockerContext: backend
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Turso — shared with Flask during coexistence
+      - key: TURSO_DB_URL
+        value: libsql://exam-prep-db-pandit.aws-ap-south-1.turso.io
+      - key: TURSO_AUTH_TOKEN
+        sync: false
+      # JWT signing — MUST be set before first deploy
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_REFRESH_SECRET
+        sync: false
+      # LLM providers (Deep Dive + admin synth)
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: DEEPSEEK_PRIMARY_KEY
+        sync: false
+      - key: DEEPSEEK_SECONDARY_KEY
+        sync: false
+      - key: GLM_API_KEY
+        sync: false
+      # Runtime
+      - key: LOG_LEVEL
+        value: info
+      - key: CORS_ORIGIN
+        sync: false   # set to https://<vercel-domain> after Vercel deploys
+      - key: PORT
+        value: "3000"

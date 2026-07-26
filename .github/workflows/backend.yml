@@ -1,0 +1,79 @@
+name: backend-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend.yml'
+  pull_request:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  check:
+    name: fmt + clippy + test + audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry + build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+          shared-key: backend-stable
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: cargo test
+        run: cargo test --locked
+
+      - name: cargo audit
+        run: |
+          cargo install --locked cargo-audit || true
+          cargo audit --ignore RUSTSEC-0000-0000 || true
+
+  docker:
+    name: docker build
+    runs-on: ubuntu-latest
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: backend/Dockerfile
+          push: false
+          tags: exam-prep-backend:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trigger Render deploy hook
+        if: env.RENDER_DEPLOY_HOOK_BACKEND != ''
+        env:
+          RENDER_DEPLOY_HOOK_BACKEND: ${{ secrets.RENDER_DEPLOY_HOOK_BACKEND }}
+        run: |
+          curl -fsSL -X POST "$RENDER_DEPLOY_HOOK_BACKEND"
