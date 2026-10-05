@@ -171,6 +171,8 @@ export interface CreateTestRequest {
   difficulty?: 'easy' | 'medium' | 'hard' | null;
   neg_marking_preset?: 'none' | 'third' | 'quarter' | 'fifth' | 'custom';
   neg_marking_ratio?: number;
+  /** Full-paper mode, e.g. "GATE2024_CS_S1" — overrides topics/count/filters. */
+  paper_code?: string;
 }
 
 export interface CreateTestResponse {
@@ -188,7 +190,17 @@ export interface TestQuestion {
   option_c: string | null;
   option_d: string | null;
   order_index: number;
+  qtype: QType;
+  marks: number;
+  /** Question rendered as an image (official papers keep maths + diagrams). */
+  image_url: string | null;
+  /** Exam section, e.g. "GA" / "CS" / "DA". */
+  paper_section: string | null;
+  q_number: number | null;
 }
+
+export type QType = 'MCQ' | 'MSQ' | 'NAT';
+export type Confidence = 'sure' | 'unsure' | 'guess';
 
 export interface TestResponseSnapshot {
   question_id: number;
@@ -196,6 +208,8 @@ export interface TestResponseSnapshot {
   marked_for_review: boolean;
   visit_count: number;
   time_spent_sec: number | null;
+  confidence: Confidence | null;
+  note: string | null;
 }
 
 export interface TestStateResponse {
@@ -206,13 +220,17 @@ export interface TestStateResponse {
   questions: TestQuestion[];
   responses: TestResponseSnapshot[];
   status: 'in_progress' | 'completed' | 'abandoned';
+  paper_code: string | null;
 }
 
 export interface SubmitAnswerRequest {
   question_id: number;
+  /** MCQ "B", MSQ "A;C", NAT "2.5"; null clears. */
   selected_option?: string | null;
   marked_for_review: boolean;
   time_spent_sec: number;
+  confidence?: Confidence | null;
+  note?: string | null;
 }
 
 export interface MarkForReviewRequest {
@@ -235,6 +253,7 @@ export interface FinishResponse {
   unanswered: number;
   score_pct: number;
   raw_marks: number;
+  max_marks: number;
   negative_ratio: number;
   breakdown_by_topic: TopicBreakdownRow[];
 }
@@ -248,6 +267,18 @@ export interface ResultsQuestionRow {
   explanation: string | null;
   time_spent_sec: number | null;
   topic_name: string | null;
+  option_a: string | null;
+  option_b: string | null;
+  option_c: string | null;
+  option_d: string | null;
+  qtype: QType;
+  marks: number;
+  marks_awarded: number | null;
+  image_url: string | null;
+  paper_section: string | null;
+  q_number: number | null;
+  confidence: Confidence | null;
+  note: string | null;
 }
 
 export interface ResultsResponse extends FinishResponse {
@@ -268,6 +299,18 @@ export interface TestHistoryItem {
   completed_at: string | null;
   time_taken_sec: number | null;
   computed_grade: string | null;
+  paper_code: string | null;
+}
+
+export interface PaperSummary {
+  paper_code: string;
+  question_count: number;
+  max_marks: number;
+  sections: string[];
+}
+
+export interface PapersResponse {
+  papers: PaperSummary[];
 }
 export interface TestListResponse {
   items: TestHistoryItem[];
@@ -399,6 +442,8 @@ export interface ReviewCard {
   correct_option?: string | null;
   explanation?: string | null;
   topic_name: string | null;
+  qtype: QType;
+  image_url: string | null;
   sr_box: number;
   sr_due_at: string | null;
   if_ok_box: number;

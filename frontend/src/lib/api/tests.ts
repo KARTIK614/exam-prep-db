@@ -6,6 +6,7 @@ import type {
   CreateTestResponse,
   FinishResponse,
   MarkForReviewRequest,
+  PapersResponse,
   ResultsResponse,
   SubmitAnswerRequest,
   TestListResponse,
@@ -44,6 +45,11 @@ export const testsApi = {
 
   results: (id: number) =>
     api.get<ResultsResponse>(`/api/v1/tests/${id}/results`),
+
+  updateNote: (id: number, questionId: number, note: string | null) =>
+    api.patch<{ status: string }>(`/api/v1/tests/${id}/responses/${questionId}`, { note }),
+
+  papers: () => api.get<PapersResponse>('/api/v1/papers'),
 };
 
 export function useCreateTest() {
@@ -103,5 +109,24 @@ export function useTestResults(id: number | null | undefined) {
     queryFn: () => testsApi.results(id as number),
     enabled: id !== null && id !== undefined,
     staleTime: 5 * 60_000,
+  });
+}
+
+export function usePapers() {
+  return useQuery({
+    queryKey: ['papers'],
+    queryFn: testsApi.papers,
+    staleTime: 10 * 60_000,
+  });
+}
+
+export function useUpdateNote(testId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ questionId, note }: { questionId: number; note: string | null }) =>
+      testsApi.updateNote(testId, questionId, note),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tests', testId, 'results'] });
+    },
   });
 }

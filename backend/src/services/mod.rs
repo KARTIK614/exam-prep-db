@@ -5,4 +5,5 @@
 
 pub mod auth;
 pub mod gemini;
+pub mod grading;
 pub mod sr;

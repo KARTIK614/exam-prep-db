@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -9,7 +9,9 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import { AnswerInput, QuestionBody } from '@/components/QuestionView';
 import { useReviewAnswer, useReviewQueue } from '@/lib/api/review';
+import { formatAnswer, isCorrect } from '@/lib/utils/grading';
 import { shortcutsEnabled } from '@/lib/utils/keyboard';
 import { cn } from '@/lib/utils/cn';
 
@@ -17,12 +19,12 @@ import { cn } from '@/lib/utils/cn';
  * Review — Leitner SRS single-card queue (R4 §3.6).
  *
  * Flow per card:
- *   1. Show question + 4 options (no correctness indicator).
- *   2. On Reveal (or Space) → show correct answer, explanation, box +
- *      due-date estimate.
- *   3. User grades themselves: "Missed" (POST correct=false) or
- *      "Got it" (POST correct=true). J = missed, K = got it, N = skip
- *      to next.
+ *   1. Show the question; the student answers it again (MCQ / MSQ / NAT).
+ *   2. Check (or Space) → the answer is graded against the key, and the
+ *      key, explanation and box + due-date estimate appear.
+ *   3. The student confirms: "Missed" (POST correct=false) or "Got it"
+ *      (POST correct=true). The auto-grade is the highlighted default.
+ *      J = missed, K = got it, N = skip to next.
  *
  * Card-by-card local index — we fetch a batch of ~100 cards on mount and
  * page through them. When we exhaust the batch we refetch.
@@ -32,6 +34,7 @@ export default function Review() {
   const answer = useReviewAnswer();
   const [cursor, setCursor] = useState(0);
   const [revealed, setRevealed] = useState(false);
+  const [attempt, setAttempt] = useState<string | null>(null);
 
   const cards = queue.data?.cards ?? [];
   const card = cards[cursor];
@@ -40,6 +43,7 @@ export default function Review() {
 
   const advance = useCallback(() => {
     setRevealed(false);
+    setAttempt(null);
     setCursor((c) => c + 1);
   }, []);
 
@@ -60,6 +64,7 @@ export default function Review() {
   useEffect(() => {
     setCursor(0);
     setRevealed(false);
+    setAttempt(null);
   }, [queue.data?.cards]);
 
   // Keyboard shortcuts.
@@ -93,7 +98,6 @@ export default function Review() {
     return () => document.removeEventListener('keydown', onKey);
   }, [advance, grade, revealed]);
 
-  const optionLetters = useMemo(() => ['A', 'B', 'C', 'D'] as const, []);
 
   if (queue.isLoading) {
     return (
@@ -113,6 +117,8 @@ export default function Review() {
       </div>
     );
   }
+
+  const autoCorrect = isCorrect(card.qtype, card.correct_option, attempt);
 
   return (
     <div className="mx-auto max-w-2xl space-y-4 pb-16">
@@ -136,36 +142,32 @@ export default function Review() {
           <CardDescription>Box {card.sr_box}</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="whitespace-pre-wrap text-base leading-relaxed">
-            {card.question_text ?? '(no text)'}
+          <QuestionBody q={card} />
+          <div className="mt-4">
+            <AnswerInput
+              key={card.error_id}
+              qtype={card.qtype}
+              q={card}
+              value={attempt}
+              onChange={setAttempt}
+              disabled={revealed}
+              reveal={revealed ? { key: card.correct_option ?? null } : undefined}
+            />
           </div>
-          <div className="mt-4 space-y-2">
-            {optionLetters.map((opt) => {
-              const text = card[`option_${opt.toLowerCase()}` as
-                | 'option_a'
-                | 'option_b'
-                | 'option_c'
-                | 'option_d'];
-              if (!text) return null;
-              const isRight = revealed && card.correct_option === opt;
-              return (
-                <div
-                  key={opt}
-                  className={cn(
-                    'flex items-start gap-3 rounded-md border p-3 text-sm',
-                    isRight
-                      ? 'border-success/60 bg-success/10'
-                      : 'border-border bg-bg-primary',
-                  )}
-                >
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border text-xs font-semibold">
-                    {opt}
-                  </span>
-                  <span className="whitespace-pre-wrap">{text}</span>
-                </div>
-              );
-            })}
-          </div>
+          {revealed ? (
+            <div
+              className={cn(
+                'mt-3 rounded-md p-2 text-sm font-medium',
+                autoCorrect ? 'bg-success/10 text-success' : 'bg-destructive/10 text-destructive',
+              )}
+            >
+              {attempt === null
+                ? `Not answered. Key: ${formatAnswer(card.qtype, card.correct_option)}`
+                : autoCorrect
+                  ? 'Correct.'
+                  : `Not quite. Key: ${formatAnswer(card.qtype, card.correct_option)}`}
+            </div>
+          ) : null}
 
           {revealed ? (
             <div className="mt-4 space-y-3">
@@ -200,7 +202,7 @@ export default function Review() {
         <div className="grid grid-cols-2 gap-3">
           <Button
             size="lg"
-            variant="destructive"
+            variant={autoCorrect ? 'secondary' : 'destructive'}
             onClick={() => grade(false)}
             disabled={answer.isPending}
           >
@@ -208,6 +210,7 @@ export default function Review() {
           </Button>
           <Button
             size="lg"
+            variant={autoCorrect ? 'default' : 'secondary'}
             onClick={() => grade(true)}
             disabled={answer.isPending}
           >
@@ -220,7 +223,7 @@ export default function Review() {
           className="w-full"
           onClick={() => setRevealed(true)}
         >
-          Reveal (Space)
+          {attempt === null ? 'Reveal (Space)' : 'Check (Space)'}
         </Button>
       )}
     </div>

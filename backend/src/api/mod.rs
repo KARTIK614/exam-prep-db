@@ -172,6 +172,11 @@ pub fn router(state: AppState) -> Router {
         .route("/tests/{id}/mark-for-review", post(tests::mark_for_review))
         .route("/tests/{id}/finish", post(tests::finish))
         .route("/tests/{id}/results", get(tests::get_results))
+        .route(
+            "/tests/{id}/responses/{question_id}",
+            patch(tests::update_note),
+        )
+        .route("/papers", get(tests::list_papers))
         // --- review / SRS (Phase 6) --------------------------------
         .route("/review/queue", get(review::get_queue))
         .route(

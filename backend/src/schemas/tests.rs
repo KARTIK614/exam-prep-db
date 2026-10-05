@@ -54,6 +54,12 @@ pub struct CreateTestRequest {
     /// into [0.0, 1.0].
     #[serde(default)]
     pub neg_marking_ratio: Option<f64>,
+
+    /// Full-paper mode (e.g. `GATE2024_CS_S1`): every question of that
+    /// paper, in paper order. Overrides `topic_ids`, `question_count` and
+    /// the PYQ / difficulty filters.
+    #[serde(default)]
+    pub paper_code: Option<String>,
 }
 
 /// Response from `POST /tests`. Deliberately narrow so the FE can start
@@ -81,6 +87,15 @@ pub struct TestQuestion {
     pub option_c: Option<String>,
     pub option_d: Option<String>,
     pub order_index: i64,
+    /// "MCQ" | "MSQ" | "NAT".
+    pub qtype: String,
+    pub marks: f64,
+    /// Set for questions shown as an image (official papers keep their
+    /// maths and diagrams exactly as printed).
+    pub image_url: Option<String>,
+    /// Exam section, e.g. "GA" / "CS" / "DA".
+    pub paper_section: Option<String>,
+    pub q_number: Option<i64>,
 }
 
 /// One response row in the resume payload.
@@ -91,6 +106,9 @@ pub struct TestResponseSnapshot {
     pub marked_for_review: bool,
     pub visit_count: i64,
     pub time_spent_sec: Option<f64>,
+    /// "sure" | "unsure" | "guess"; None until the student picks one.
+    pub confidence: Option<String>,
+    pub note: Option<String>,
 }
 
 /// GET /tests/{id} — full resume payload.
@@ -104,6 +122,8 @@ pub struct TestStateResponse {
     pub responses: Vec<TestResponseSnapshot>,
     /// "in_progress" | "completed" | "abandoned".
     pub status: String,
+    /// Set when the test is a full paper.
+    pub paper_code: Option<String>,
 }
 
 // ---------- POST /tests/{id}/answers --------------------------------------
@@ -116,7 +136,7 @@ pub struct TestStateResponse {
 pub struct SubmitAnswerRequest {
     pub question_id: i64,
     /// `null` clears the selection (e.g. user tapped "Clear Response").
-    /// Otherwise one of "A"|"B"|"C"|"D".
+    /// Otherwise MCQ "A"|"B"|"C"|"D", MSQ letters like "A;C", NAT a number.
     #[serde(default)]
     pub selected_option: Option<String>,
     pub marked_for_review: bool,
@@ -124,6 +144,12 @@ pub struct SubmitAnswerRequest {
     /// on every autosave; we accept a float so client-side timers can
     /// aggregate sub-second increments.
     pub time_spent_sec: f64,
+    /// "sure" | "unsure" | "guess".
+    #[serde(default)]
+    pub confidence: Option<String>,
+    /// One line on why this answer was chosen (max 500 chars).
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -144,6 +170,16 @@ pub struct MarkForReviewRequest {
 #[derive(Debug, Serialize)]
 pub struct MarkForReviewResponse {
     pub status: &'static str,
+}
+
+// ---------- PATCH /tests/{id}/responses/{question_id} ---------------------
+
+/// Edit the note on one answer. Allowed after the test is finished,
+/// because the reasoning is often written on the results page.
+#[derive(Debug, Deserialize)]
+pub struct UpdateNoteRequest {
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 // ---------- POST /tests/{id}/finish ---------------------------------------
@@ -168,6 +204,8 @@ pub struct FinishResponse {
     pub unanswered: i64,
     pub score_pct: f64,
     pub raw_marks: f64,
+    /// Sum of question marks (equals the question count for 1-mark tests).
+    pub max_marks: f64,
     pub negative_ratio: f64,
     pub breakdown_by_topic: Vec<TopicBreakdownRow>,
 }
@@ -208,6 +246,7 @@ pub struct TestHistoryItem {
     pub time_taken_sec: Option<i64>,
     /// "A" | "B" | "C" | "D" | "F". `None` when the test isn't complete.
     pub computed_grade: Option<&'static str>,
+    pub paper_code: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -229,6 +268,18 @@ pub struct ResultsQuestionRow {
     pub explanation: Option<String>,
     pub time_spent_sec: Option<f64>,
     pub topic_name: Option<String>,
+    pub option_a: Option<String>,
+    pub option_b: Option<String>,
+    pub option_c: Option<String>,
+    pub option_d: Option<String>,
+    pub qtype: String,
+    pub marks: f64,
+    pub marks_awarded: Option<f64>,
+    pub image_url: Option<String>,
+    pub paper_section: Option<String>,
+    pub q_number: Option<i64>,
+    pub confidence: Option<String>,
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -236,4 +287,21 @@ pub struct ResultsResponse {
     #[serde(flatten)]
     pub finish: FinishResponse,
     pub questions: Vec<ResultsQuestionRow>,
+}
+
+// ---------- GET /papers ---------------------------------------------------
+
+/// One full paper available for a paper-mode test.
+#[derive(Debug, Serialize)]
+pub struct PaperSummary {
+    pub paper_code: String,
+    pub question_count: i64,
+    pub max_marks: f64,
+    /// Exam sections in this paper, e.g. ["CS", "GA"].
+    pub sections: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PapersResponse {
+    pub papers: Vec<PaperSummary>,
 }
