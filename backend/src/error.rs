@@ -67,7 +67,9 @@ pub enum AppError {
 
 impl From<libsql::Error> for AppError {
     fn from(err: libsql::Error) -> Self {
-        AppError::Db(err.to_string())
+        let text = err.to_string();
+        crate::db::mark_stream_broken_if(&text);
+        AppError::Db(text)
     }
 }
 

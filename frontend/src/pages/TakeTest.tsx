@@ -6,7 +6,7 @@ import {
   useState,
 } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Flag, HelpCircle, Loader2 } from 'lucide-react';
+import { Coffee, Flag, HelpCircle, Loader2, Pause, Play } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -19,6 +19,11 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import {
+  AnswerInput,
+  ConfidencePicker,
+  QuestionBody,
+} from '@/components/QuestionView';
+import {
   useFinishTest,
   useMarkForReview,
   useSubmitAnswer,
@@ -27,7 +32,8 @@ import {
 import { useSubmitFlag } from '@/lib/api/flags';
 import { shortcutsEnabled } from '@/lib/utils/keyboard';
 import { cn } from '@/lib/utils/cn';
-import type { FlagCategory } from '@/lib/api/types';
+import type { Confidence, FlagCategory } from '@/lib/api/types';
+import { TYPE_LABEL, toggleLetter } from '@/lib/utils/grading';
 
 /**
  * TakeTest — the exam-taking screen.
@@ -44,13 +50,19 @@ import type { FlagCategory } from '@/lib/api/types';
  * Timer runs top-right (count-up per question).
  *
  * Keyboard shortcuts (see `useEffect` block below):
- *   A/B/C/D  → select option, save, advance
+ *   A/B/C/D  → MCQ: select, save, advance · MSQ: toggle that option
+ *   S/U/G    → confidence: sure / unsure / guess
+ *   P        → pause / resume (the question is hidden while paused)
  *   Enter    → save + next (finish confirm on last)
  *   ← →      → prev / next (also 1..9 for jump to palette cell)
  *   M        → toggle mark for review
  *   F        → open flag modal
  *   ?        → open help modal
  *   Ctrl+Enter → finish (with confirm)
+ *
+ * Pomodoro: active time (paused time excluded) runs in 50-minute blocks.
+ * At the end of a block the test pauses itself and shows a 10-minute
+ * break clock; resume whenever. Leaving the tab also pauses.
  *
  * State model: we maintain a local mirror of {selection, marked, time}
  * per question so the UI can respond immediately, then POST autosave to
@@ -66,13 +78,19 @@ import type { FlagCategory } from '@/lib/api/types';
  *   current          blue outline
  */
 
-type Selection = 'A' | 'B' | 'C' | 'D' | null;
+/** Stored answer encoding: MCQ "B", MSQ "A;C", NAT "2.5". */
+type Selection = string | null;
 interface LocalAnswer {
   selected: Selection;
   marked: boolean;
   timeSpent: number;
   visited: boolean;
+  confidence: Confidence | null;
+  note: string;
 }
+
+const BLOCK_SEC = 50 * 60;
+const BREAK_SEC = 10 * 60;
 
 export default function TakeTest() {
   const { id } = useParams<{ id: string }>();
@@ -95,6 +113,11 @@ export default function TakeTest() {
   const [showHelp, setShowHelp] = useState(false);
   const [flagCategory, setFlagCategory] = useState<FlagCategory>('wrong_answer');
   const [flagNote, setFlagNote] = useState('');
+  const [paused, setPaused] = useState(false);
+  const [onBreak, setOnBreak] = useState(false);
+  const [breakLeft, setBreakLeft] = useState(BREAK_SEC);
+  const [showNote, setShowNote] = useState(false);
+  const blocksDoneRef = useRef<number | null>(null);
 
   // Timer: per-question count-up.
   const [elapsed, setElapsed] = useState(0);
@@ -105,19 +128,16 @@ export default function TakeTest() {
     if (!test.data) return;
     const seed: Record<number, LocalAnswer> = {};
     for (const q of test.data.questions) {
-      seed[q.id] = {
-        selected: null,
-        marked: false,
-        timeSpent: 0,
-        visited: false,
-      };
+      seed[q.id] = blank();
     }
     for (const r of test.data.responses) {
       seed[r.question_id] = {
-        selected: (r.selected_option as Selection) ?? null,
+        selected: r.selected_option ?? null,
         marked: r.marked_for_review,
         timeSpent: r.time_spent_sec ?? 0,
-        visited: true,
+        visited: (r.visit_count ?? 0) > 0 || r.selected_option !== null,
+        confidence: r.confidence ?? null,
+        note: r.note ?? '',
       };
     }
     // Current index defaults to first non-answered.
@@ -132,19 +152,20 @@ export default function TakeTest() {
 
   const currentQ = questions[currentIdx];
 
-  // Per-question timer ticker.
+  // Per-question timer ticker (stopped while paused).
   useEffect(() => {
-    if (!currentQ) return;
+    if (!currentQ || paused) return;
     const t = setInterval(() => {
       setElapsed(Math.floor((Date.now() - questionStartRef.current) / 1000));
     }, 1000);
     return () => clearInterval(t);
-  }, [currentQ, currentIdx]);
+  }, [currentQ, currentIdx, paused]);
 
   // Reset timer when question changes.
   useEffect(() => {
     questionStartRef.current = Date.now();
     setElapsed(0);
+    setShowNote(false);
     // Mark visited on entry.
     if (currentQ) {
       setAnswers((prev) => ({
@@ -168,6 +189,8 @@ export default function TakeTest() {
           selected_option: next.selected ?? null,
           marked_for_review: next.marked,
           time_spent_sec: Math.round(next.timeSpent),
+          confidence: next.confidence,
+          note: next.note.trim() || null,
         });
         return { ...prev, [qid]: next };
       });
@@ -177,53 +200,136 @@ export default function TakeTest() {
 
   const snapshotElapsed = useCallback(() => {
     if (!currentQ) return 0;
-    const seconds = Math.floor((Date.now() - questionStartRef.current) / 1000);
+    const seconds = paused ? 0 : Math.floor((Date.now() - questionStartRef.current) / 1000);
     return (answers[currentQ.id]?.timeSpent ?? 0) + seconds;
-  }, [answers, currentQ]);
+  }, [answers, currentQ, paused]);
+
+  // Bank the running clock into the current question; the clock restarts
+  // from "now" so the same seconds are never counted twice.
+  const bankTime = useCallback(() => {
+    const t = snapshotElapsed();
+    questionStartRef.current = Date.now();
+    setElapsed(0);
+    return t;
+  }, [snapshotElapsed]);
 
   const goto = useCallback(
     (nextIdx: number) => {
       if (!currentQ) return;
       if (nextIdx < 0 || nextIdx >= total) return;
       // Flush current time-spent before switching.
-      persistAnswer(currentQ.id, { timeSpent: snapshotElapsed() });
+      persistAnswer(currentQ.id, { timeSpent: bankTime() });
       setCurrentIdx(nextIdx);
     },
-    [currentQ, total, persistAnswer, snapshotElapsed],
+    [currentQ, total, persistAnswer, bankTime],
   );
 
-  const selectOption = useCallback(
-    (opt: 'A' | 'B' | 'C' | 'D') => {
-      if (!currentQ) return;
-      persistAnswer(currentQ.id, {
-        selected: opt,
-        timeSpent: snapshotElapsed(),
-      });
+  const setSelection = useCallback(
+    (value: Selection) => {
+      if (!currentQ || paused) return;
+      persistAnswer(currentQ.id, { selected: value, timeSpent: bankTime() });
     },
-    [currentQ, persistAnswer, snapshotElapsed],
+    [currentQ, paused, persistAnswer, bankTime],
+  );
+
+  const setConfidence = useCallback(
+    (c: Confidence | null) => {
+      if (!currentQ || paused) return;
+      persistAnswer(currentQ.id, { confidence: c, timeSpent: bankTime() });
+    },
+    [currentQ, paused, persistAnswer, bankTime],
+  );
+
+  const saveNote = useCallback(
+    (note: string) => {
+      if (!currentQ) return;
+      persistAnswer(currentQ.id, { note, timeSpent: bankTime() });
+    },
+    [currentQ, persistAnswer, bankTime],
   );
 
   const clearSelection = useCallback(() => {
     if (!currentQ) return;
-    persistAnswer(currentQ.id, { selected: null, timeSpent: snapshotElapsed() });
-  }, [currentQ, persistAnswer, snapshotElapsed]);
+    persistAnswer(currentQ.id, { selected: null, timeSpent: bankTime() });
+  }, [currentQ, persistAnswer, bankTime]);
 
   const toggleMark = useCallback(() => {
     if (!currentQ) return;
     const now = !answers[currentQ.id]?.marked;
-    persistAnswer(currentQ.id, { marked: now, timeSpent: snapshotElapsed() });
+    persistAnswer(currentQ.id, { marked: now, timeSpent: bankTime() });
     markForReview.mutate({ question_id: currentQ.id, marked: now });
-  }, [answers, currentQ, markForReview, persistAnswer, snapshotElapsed]);
+  }, [answers, currentQ, markForReview, persistAnswer, bankTime]);
 
   const saveAndNext = useCallback(() => {
     if (!currentQ) return;
-    persistAnswer(currentQ.id, { timeSpent: snapshotElapsed() });
+    persistAnswer(currentQ.id, { timeSpent: bankTime() });
     if (currentIdx === total - 1) {
       setShowFinish(true);
     } else {
       setCurrentIdx((i) => Math.min(i + 1, total - 1));
     }
-  }, [currentIdx, currentQ, persistAnswer, snapshotElapsed, total]);
+  }, [currentIdx, currentQ, persistAnswer, bankTime, total]);
+
+  // ---------- pause + pomodoro -----------------------------
+
+  const pause = useCallback(
+    (asBreak = false) => {
+      if (paused || !currentQ) return;
+      persistAnswer(currentQ.id, { timeSpent: snapshotElapsed() });
+      setPaused(true);
+      setElapsed(0);
+      if (asBreak) {
+        setOnBreak(true);
+        setBreakLeft(BREAK_SEC);
+      }
+    },
+    [currentQ, paused, persistAnswer, snapshotElapsed],
+  );
+
+  const resume = useCallback(() => {
+    questionStartRef.current = Date.now();
+    setElapsed(0);
+    setPaused(false);
+    setOnBreak(false);
+  }, []);
+
+  // Active seconds across the whole test (paused time is never counted).
+  const activeSec = useMemo(() => {
+    let sum = 0;
+    for (const q of questions) sum += answers[q.id]?.timeSpent ?? 0;
+    return sum + (paused ? 0 : elapsed);
+  }, [answers, elapsed, paused, questions]);
+  const blockIdx = Math.floor(activeSec / BLOCK_SEC);
+  const blockSec = activeSec - blockIdx * BLOCK_SEC;
+
+  // Auto-break at each 50-minute boundary (not on load / resume-after-refresh).
+  useEffect(() => {
+    if (!test.data) return;
+    if (blocksDoneRef.current === null) {
+      blocksDoneRef.current = blockIdx;
+      return;
+    }
+    if (blockIdx > blocksDoneRef.current) {
+      blocksDoneRef.current = blockIdx;
+      pause(true);
+    }
+  }, [blockIdx, pause, test.data]);
+
+  // Break clock.
+  useEffect(() => {
+    if (!onBreak) return;
+    const t = setInterval(() => setBreakLeft((s) => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(t);
+  }, [onBreak]);
+
+  // Leaving the tab pauses the clock.
+  useEffect(() => {
+    const onVis = () => {
+      if (document.hidden) pause(false);
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [pause]);
 
   const handleFinish = useCallback(async () => {
     try {
@@ -239,6 +345,8 @@ export default function TakeTest() {
   }, [currentQ, finish, navigate, persistAnswer, snapshotElapsed, testId]);
 
   // ---------- keyboard shortcuts --------------------------
+
+  const currentSelection = currentQ ? (answers[currentQ.id]?.selected ?? null) : null;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -257,26 +365,42 @@ export default function TakeTest() {
         return;
       }
 
+      if (key.toLowerCase() === 'p') {
+        e.preventDefault();
+        if (paused) resume();
+        else pause(false);
+        return;
+      }
+      if (paused) return;
+
+      const qtype = currentQ?.qtype ?? 'MCQ';
       switch (key.toLowerCase()) {
         case 'a':
-          e.preventDefault();
-          selectOption('A');
-          setTimeout(saveAndNext, 100);
-          break;
         case 'b':
-          e.preventDefault();
-          selectOption('B');
-          setTimeout(saveAndNext, 100);
-          break;
         case 'c':
+        case 'd': {
+          if (qtype === 'NAT') break;
           e.preventDefault();
-          selectOption('C');
-          setTimeout(saveAndNext, 100);
+          const letter = key.toUpperCase();
+          if (qtype === 'MSQ') {
+            setSelection(toggleLetter(currentSelection, letter));
+          } else {
+            setSelection(letter);
+            setTimeout(saveAndNext, 100);
+          }
           break;
-        case 'd':
+        }
+        case 's':
           e.preventDefault();
-          selectOption('D');
-          setTimeout(saveAndNext, 100);
+          setConfidence('sure');
+          break;
+        case 'u':
+          e.preventDefault();
+          setConfidence('unsure');
+          break;
+        case 'g':
+          e.preventDefault();
+          setConfidence('guess');
           break;
         case 'enter':
           e.preventDefault();
@@ -308,7 +432,19 @@ export default function TakeTest() {
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [currentIdx, goto, saveAndNext, selectOption, toggleMark]);
+  }, [
+    currentIdx,
+    currentQ,
+    currentSelection,
+    goto,
+    pause,
+    paused,
+    resume,
+    saveAndNext,
+    setConfidence,
+    setSelection,
+    toggleMark,
+  ]);
 
   // ---------- palette --------------------------------------
 
@@ -341,10 +477,14 @@ export default function TakeTest() {
     );
   }
 
+  // GATE pace targets: ~2 min per 1-mark, ~4 min per 2-mark question.
+  const isPaper = Boolean(test.data.paper_code);
+  const targetSec = isPaper ? (currentQ.marks >= 2 ? 240 : 120) : 60;
+  const qElapsed = (answers[currentQ.id]?.timeSpent ?? 0) + (paused ? 0 : elapsed);
   const timerColor =
-    elapsed >= 90
+    qElapsed >= targetSec * 1.5
       ? 'text-destructive'
-      : elapsed >= 60
+      : qElapsed >= targetSec
         ? 'text-warning'
         : 'text-text-primary';
 
@@ -358,11 +498,36 @@ export default function TakeTest() {
         <div className="mb-4 flex items-center justify-between">
           <div className="text-sm text-muted-foreground">
             Question {currentIdx + 1} of {total}
+            {isPaper ? (
+              <span className="ml-2 hidden sm:inline">
+                · {currentQ.paper_section ?? ''} · {currentQ.marks} mark
+                {currentQ.marks === 1 ? '' : 's'} · {TYPE_LABEL[currentQ.qtype]}
+                {currentQ.qtype === 'MCQ' ? ` · −${(currentQ.marks / 3).toFixed(2)} if wrong` : ' · no negative'}
+              </span>
+            ) : null}
           </div>
           <div className="flex items-center gap-3">
-            <div className={cn('font-mono text-sm tabular-nums', timerColor)}>
-              {formatSec(elapsed)}
+            <div
+              className="hidden font-mono text-xs tabular-nums text-muted-foreground sm:block"
+              title="Active time in this 50-minute block (paused time not counted)"
+            >
+              Block {blockIdx + 1} · {formatSec(blockSec)} / 50:00
             </div>
+            <div
+              className={cn('font-mono text-sm tabular-nums', timerColor)}
+              title={`Time on this question · target ${formatSec(targetSec)}`}
+            >
+              {formatSec(qElapsed)}
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => (paused ? resume() : pause(false))}
+              aria-label={paused ? 'Resume (P)' : 'Pause (P)'}
+              title={paused ? 'Resume (P)' : 'Pause (P)'}
+            >
+              {paused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+            </Button>
             <Button
               variant="ghost"
               size="icon"
@@ -382,46 +547,42 @@ export default function TakeTest() {
         </div>
 
         {/* Question card */}
-        <div className="flex-1 rounded-lg border border-border bg-bg-secondary p-4 sm:p-6">
-          <div className="whitespace-pre-wrap text-base leading-relaxed">
-            {currentQ.question_text ?? '(question text missing)'}
-          </div>
-          <div className="mt-4 space-y-2">
-            {(['A', 'B', 'C', 'D'] as const).map((opt) => {
-              const text = currentQ[`option_${opt.toLowerCase()}` as
-                | 'option_a'
-                | 'option_b'
-                | 'option_c'
-                | 'option_d'];
-              if (!text) return null;
-              const on = current.selected === opt;
-              return (
-                <button
-                  type="button"
-                  key={opt}
-                  onClick={() => selectOption(opt)}
-                  className={cn(
-                    'flex w-full items-start gap-3 rounded-md border p-3 text-left text-sm transition-colors',
-                    on
-                      ? 'border-primary bg-primary/10'
-                      : 'border-border bg-bg-primary hover:bg-muted',
-                  )}
-                >
-                  <span
-                    className={cn(
-                      'mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold',
-                      on
-                        ? 'border-primary bg-primary text-primary-foreground'
-                        : 'border-border',
-                    )}
+        <div className="relative flex-1 rounded-lg border border-border bg-bg-secondary p-4 sm:p-6">
+          {isPaper && currentQ.qtype !== 'MCQ' ? (
+            <div className="mb-2 sm:hidden text-xs text-muted-foreground">
+              {currentQ.marks} mark{currentQ.marks === 1 ? '' : 's'} · {TYPE_LABEL[currentQ.qtype]}
+            </div>
+          ) : null}
+          {paused ? (
+            <PausePanel onBreak={onBreak} breakLeft={breakLeft} blockIdx={blockIdx} onResume={resume} />
+          ) : (
+            <>
+              <QuestionBody q={currentQ} />
+              <div className="mt-4">
+                <AnswerInput
+                  key={currentQ.id}
+                  qtype={currentQ.qtype}
+                  q={currentQ}
+                  value={current.selected}
+                  onChange={setSelection}
+                />
+              </div>
+              <div className="mt-4 space-y-2 border-t border-border pt-3">
+                <ConfidencePicker value={current.confidence} onChange={setConfidence} />
+                {showNote || current.note ? (
+                  <NoteField key={currentQ.id} initial={current.note} onSave={saveNote} />
+                ) : (
+                  <button
+                    type="button"
+                    className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                    onClick={() => setShowNote(true)}
                   >
-                    {opt}
-                  </span>
-                  <span className="whitespace-pre-wrap">{text}</span>
-                </button>
-              );
-            })}
-          </div>
+                    + Why did you pick this? (optional, one line)
+                  </button>
+                )}
+              </div>
+            </>
+          )}
         </div>
 
         {/* Bottom actions */}
@@ -575,7 +736,9 @@ export default function TakeTest() {
             <DialogTitle>Keyboard shortcuts</DialogTitle>
           </DialogHeader>
           <div className="grid grid-cols-2 gap-2 text-sm">
-            <ShortcutRow keys="A / B / C / D" desc="Select option & advance" />
+            <ShortcutRow keys="A / B / C / D" desc="Select (MCQ: & advance · MSQ: toggle)" />
+            <ShortcutRow keys="S / U / G" desc="Sure / Unsure / Guess" />
+            <ShortcutRow keys="P" desc="Pause / resume" />
             <ShortcutRow keys="Enter" desc="Save & next" />
             <ShortcutRow keys="← / →" desc="Prev / next question" />
             <ShortcutRow keys="1–9" desc="Jump to that question" />
@@ -681,7 +844,94 @@ function formatSec(s: number): string {
 }
 
 function blank(): LocalAnswer {
-  return { selected: null, marked: false, timeSpent: 0, visited: false };
+  return {
+    selected: null,
+    marked: false,
+    timeSpent: 0,
+    visited: false,
+    confidence: null,
+    note: '',
+  };
+}
+
+function PausePanel({
+  onBreak,
+  breakLeft,
+  blockIdx,
+  onResume,
+}: {
+  onBreak: boolean;
+  breakLeft: number;
+  blockIdx: number;
+  onResume: () => void;
+}) {
+  return (
+    <div className="flex min-h-[320px] flex-col items-center justify-center gap-3 text-center">
+      {onBreak ? (
+        <>
+          <Coffee className="h-8 w-8 text-muted-foreground" />
+          <div className="text-lg font-medium">Block {blockIdx} done. Take your 10-minute break.</div>
+          <div
+            className={cn(
+              'font-mono text-4xl tabular-nums',
+              breakLeft === 0 ? 'text-warning' : 'text-text-primary',
+            )}
+          >
+            {formatSec(breakLeft)}
+          </div>
+          <p className="max-w-sm text-sm text-muted-foreground">
+            Water, walk, no screens. The question stays hidden and the clock is stopped.
+          </p>
+        </>
+      ) : (
+        <>
+          <Pause className="h-8 w-8 text-muted-foreground" />
+          <div className="text-lg font-medium">Paused</div>
+          <p className="max-w-sm text-sm text-muted-foreground">
+            The clock is stopped and the question is hidden.
+          </p>
+        </>
+      )}
+      <Button onClick={onResume}>
+        <Play className="mr-1 h-4 w-4" /> Resume (P)
+      </Button>
+    </div>
+  );
+}
+
+/** One-line reasoning note. Saved on blur / Enter, not per keystroke. */
+function NoteField({ initial, onSave }: { initial: string; onSave: (note: string) => void }) {
+  const [draft, setDraft] = useState(initial);
+  const commit = () => {
+    if (draft.trim() !== initial.trim()) onSave(draft.trim());
+  };
+  return (
+    <div>
+      <label htmlFor="answer-note" className="text-xs text-muted-foreground">
+        Why did you pick this? One line is enough; voice dictation works.
+      </label>
+      <input
+        id="answer-note"
+        value={draft}
+        maxLength={500}
+        autoComplete="off"
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            // Enter only commits this field; don't let the page-level
+            // "Enter = save & next" shortcut see it once focus has left.
+            e.preventDefault();
+            e.stopPropagation();
+            commit();
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+        placeholder="e.g. used P(A|B)=P(B|A) without the base rate"
+        className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+      />
+    </div>
+  );
 }
 
 function countAnswered(

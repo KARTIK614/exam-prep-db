@@ -38,6 +38,9 @@ pub struct ReviewQuestion {
     pub difficulty: Option<String>,
     pub topic_id: Option<i64>,
     pub topic_name: Option<String>,
+    /// "MCQ" | "MSQ" | "NAT" — the FE grades the re-attempt locally.
+    pub qtype: String,
+    pub image_url: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]

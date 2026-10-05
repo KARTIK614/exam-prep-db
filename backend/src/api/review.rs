@@ -95,7 +95,8 @@ pub async fn get_queue(
                            q.id AS question_id, q.question_text, \
                            q.option_a, q.option_b, q.option_c, q.option_d, \
                            q.correct_option, q.explanation, q.difficulty, \
-                           t.id AS topic_id, t.name AS topic_name \
+                           t.id AS topic_id, t.name AS topic_name, \
+                           q.qtype, q.image_url \
                     FROM error_log el \
                     JOIN questions q ON q.id = el.question_id \
                     JOIN topics t ON t.id = el.topic_id \
@@ -171,6 +172,19 @@ pub async fn get_queue(
             row.get_value(14)
                 .map_err(|e| AppError::Internal(format!("queue: read topic_name: {e}")))?,
         );
+        let qtype = crate::services::grading::QType::parse(
+            value_to_opt_string(
+                row.get_value(15)
+                    .map_err(|e| AppError::Internal(format!("queue: read qtype: {e}")))?,
+            )
+            .as_deref(),
+        )
+        .as_str()
+        .to_string();
+        let image_url = value_to_opt_string(
+            row.get_value(16)
+                .map_err(|e| AppError::Internal(format!("queue: read image_url: {e}")))?,
+        );
 
         cards.push(ReviewCard {
             card_id,
@@ -186,6 +200,8 @@ pub async fn get_queue(
                 difficulty,
                 topic_id,
                 topic_name,
+                qtype,
+                image_url,
             },
             box_num,
             due_at,

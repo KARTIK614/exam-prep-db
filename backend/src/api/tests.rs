@@ -42,10 +42,12 @@ use crate::models::{
 };
 use crate::schemas::tests::{
     CreateTestRequest, CreateTestResponse, FinishResponse, MarkForReviewRequest,
-    MarkForReviewResponse, ResultsQuestionRow, ResultsResponse, SubmitAnswerRequest,
-    SubmitAnswerResponse, TestHistoryItem, TestListQuery, TestListResponse, TestQuestion,
-    TestResponseSnapshot, TestStateResponse, TopicBreakdownRow,
+    MarkForReviewResponse, PaperSummary, PapersResponse, ResultsQuestionRow, ResultsResponse,
+    SubmitAnswerRequest, SubmitAnswerResponse, TestHistoryItem, TestListQuery,
+    TestListResponse, TestQuestion, TestResponseSnapshot, TestStateResponse,
+    TopicBreakdownRow, UpdateNoteRequest,
 };
+use crate::services::grading::{self, QType};
 use crate::services::sr;
 
 // ---------- helpers --------------------------------------------------------
@@ -93,13 +95,47 @@ fn validate_difficulty(d: Option<&str>) -> Result<Option<String>, AppError> {
     }
 }
 
-fn validate_option(opt: &str) -> Result<String, AppError> {
-    match opt {
-        "A" | "B" | "C" | "D" => Ok(opt.to_string()),
-        _ => Err(AppError::BadRequest(format!(
-            "invalid selected_option: {opt} (expected A|B|C|D)"
+fn validate_confidence(c: Option<&str>) -> Result<Option<String>, AppError> {
+    match c.map(str::trim) {
+        None | Some("") => Ok(None),
+        Some(v @ ("sure" | "unsure" | "guess")) => Ok(Some(v.to_string())),
+        Some(v) => Err(AppError::BadRequest(format!(
+            "invalid confidence: {v} (expected sure|unsure|guess)"
         ))),
     }
+}
+
+const NOTE_MAX_CHARS: usize = 500;
+
+/// Trim a note; empty becomes NULL. Over-long notes are rejected rather
+/// than silently cut, so the student knows what was saved.
+fn clean_note(n: Option<&str>) -> Result<Option<String>, AppError> {
+    match n.map(str::trim) {
+        None | Some("") => Ok(None),
+        Some(v) if v.chars().count() > NOTE_MAX_CHARS => Err(AppError::BadRequest(format!(
+            "note is too long ({} chars, max {NOTE_MAX_CHARS})",
+            v.chars().count()
+        ))),
+        Some(v) => Ok(Some(v.to_string())),
+    }
+}
+
+/// Paper codes are short identifiers like `GATE2024_CS_S1`.
+fn validate_paper_code(code: &str) -> Result<String, AppError> {
+    let c = code.trim();
+    if c.is_empty()
+        || c.len() > 40
+        || !c.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    {
+        return Err(AppError::BadRequest(format!("invalid paper_code: {code}")));
+    }
+    Ok(c.to_string())
+}
+
+/// `mock_tests.paper` also holds legacy RSSB labels ("I" / "II"); only
+/// full-paper codes (which always contain an underscore) count as papers.
+fn is_paper_code(p: &str) -> bool {
+    p.contains('_')
 }
 
 /// One-row lookup: test summary + ownership check.
@@ -117,7 +153,7 @@ async fn load_test_for_user(
     let sql = "SELECT id, user_id, test_mode, negative_ratio, status, \
                       started_at, total_questions, score, raw_marks, \
                       wrong_count, unanswered_count, time_taken_sec, \
-                      completed_at \
+                      completed_at, paper, max_score \
                FROM mock_tests WHERE id = ?1 LIMIT 1";
     let mut rows = state.db.conn().query(sql, params![test_id]).await?;
     let row = rows.next().await?.ok_or(AppError::NotFound("test"))?;
@@ -179,6 +215,14 @@ async fn load_test_for_user(
             row.get_value(12)
                 .map_err(|e| AppError::Internal(format!("read completed_at: {e}")))?,
         ),
+        paper: value_to_opt_string(
+            row.get_value(13)
+                .map_err(|e| AppError::Internal(format!("read paper: {e}")))?,
+        ),
+        max_score: value_to_opt_f64(
+            row.get_value(14)
+                .map_err(|e| AppError::Internal(format!("read max_score: {e}")))?,
+        ),
     })
 }
 
@@ -199,6 +243,10 @@ struct TestRow {
     unanswered_count: Option<i64>,
     time_taken_sec: Option<i64>,
     completed_at: Option<String>,
+    /// Paper code for full-paper tests (legacy rows: RSSB "I"/"II" or NULL).
+    paper: Option<String>,
+    /// Sum of question marks at creation time.
+    max_score: Option<f64>,
 }
 
 // ---------- POST /tests ----------------------------------------------------
@@ -223,73 +271,113 @@ pub async fn create_test(
         req.neg_marking_ratio,
     );
 
-    // Clamp count into [1, 200] — matches the plan doc's ceiling.
-    let want = req.question_count.clamp(1, 200) as usize;
+    let paper_code = match req.paper_code.as_deref() {
+        Some(c) if !c.trim().is_empty() => Some(validate_paper_code(c)?),
+        _ => None,
+    };
 
-    // Build the filter SQL + bind list.
-    let mut clauses: Vec<String> = vec!["(q.disabled = 0 OR q.disabled IS NULL)".into()];
-    let mut vals: Vec<libsql::Value> = Vec::new();
-
-    if !req.topic_ids.is_empty() {
-        let placeholders = std::iter::repeat("?")
-            .take(req.topic_ids.len())
-            .collect::<Vec<_>>()
-            .join(",");
-        clauses.push(format!("q.topic_id IN ({placeholders})"));
-        for tid in &req.topic_ids {
-            vals.push(libsql::Value::Integer(*tid));
+    // (question id, marks) for the chosen set, in the order they'll be asked.
+    let taken: Vec<(i64, f64)> = if let Some(code) = paper_code.as_deref() {
+        // Full-paper mode: every enabled question of the paper, paper order.
+        let mut rows = state
+            .db
+            .conn()
+            .query(
+                "SELECT q.id, COALESCE(q.marks, 1) FROM questions q \
+                 WHERE q.paper_code = ?1 AND (q.disabled = 0 OR q.disabled IS NULL) \
+                 ORDER BY q.q_number, q.id",
+                params![code.to_string()],
+            )
+            .await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let id = row
+                .get::<i64>(0)
+                .map_err(|e| AppError::Internal(format!("read paper question id: {e}")))?;
+            let marks = value_to_opt_f64(
+                row.get_value(1)
+                    .map_err(|e| AppError::Internal(format!("read paper marks: {e}")))?,
+            )
+            .unwrap_or(1.0);
+            out.push((id, marks));
         }
-    }
-    if let Some(d) = difficulty.as_deref() {
-        clauses.push("q.difficulty = ?".into());
-        vals.push(libsql::Value::Text(d.to_string()));
-    }
-    if matches!(req.pyq_only, Some(true)) {
-        clauses.push("(q.pyq_exam IS NOT NULL AND q.pyq_exam <> '')".into());
-    }
-    if let Some(y) = req.pyq_year_min {
-        clauses.push("COALESCE(q.pyq_year, 0) >= ?".into());
-        vals.push(libsql::Value::Integer(y as i64));
-    }
-    if let Some(y) = req.pyq_year_max {
-        clauses.push("COALESCE(q.pyq_year, 0) <= ?".into());
-        vals.push(libsql::Value::Integer(y as i64));
-    }
+        if out.is_empty() {
+            return Err(AppError::BadRequest(format!("no questions found for paper {code}")));
+        }
+        out
+    } else {
+        // Clamp count into [1, 200] — matches the plan doc's ceiling.
+        let want = req.question_count.clamp(1, 200) as usize;
 
-    let where_sql = clauses.join(" AND ");
-    let candidates_sql = format!(
-        "SELECT q.id FROM questions q WHERE {where_sql} ORDER BY q.id"
-    );
+        // Build the filter SQL + bind list.
+        let mut clauses: Vec<String> = vec!["(q.disabled = 0 OR q.disabled IS NULL)".into()];
+        let mut vals: Vec<libsql::Value> = Vec::new();
 
-    let mut rows = state.db.conn().query(&candidates_sql, vals).await?;
-    let mut candidate_ids: Vec<i64> = Vec::new();
-    while let Some(row) = rows.next().await? {
-        candidate_ids.push(
-            row.get::<i64>(0)
-                .map_err(|e| AppError::Internal(format!("read candidate id: {e}")))?,
+        if !req.topic_ids.is_empty() {
+            let placeholders = std::iter::repeat("?")
+                .take(req.topic_ids.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            clauses.push(format!("q.topic_id IN ({placeholders})"));
+            for tid in &req.topic_ids {
+                vals.push(libsql::Value::Integer(*tid));
+            }
+        }
+        if let Some(d) = difficulty.as_deref() {
+            clauses.push("q.difficulty = ?".into());
+            vals.push(libsql::Value::Text(d.to_string()));
+        }
+        if matches!(req.pyq_only, Some(true)) {
+            clauses.push("(q.pyq_exam IS NOT NULL AND q.pyq_exam <> '')".into());
+        }
+        if let Some(y) = req.pyq_year_min {
+            clauses.push("COALESCE(q.pyq_year, 0) >= ?".into());
+            vals.push(libsql::Value::Integer(y as i64));
+        }
+        if let Some(y) = req.pyq_year_max {
+            clauses.push("COALESCE(q.pyq_year, 0) <= ?".into());
+            vals.push(libsql::Value::Integer(y as i64));
+        }
+
+        let where_sql = clauses.join(" AND ");
+        let candidates_sql = format!(
+            "SELECT q.id, COALESCE(q.marks, 1) FROM questions q WHERE {where_sql} ORDER BY q.id"
         );
-    }
 
-    if candidate_ids.is_empty() {
-        return Err(AppError::BadRequest(
-            "no questions matched the requested filters".into(),
-        ));
-    }
+        let mut rows = state.db.conn().query(&candidates_sql, vals).await?;
+        let mut candidates: Vec<(i64, f64)> = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let id = row
+                .get::<i64>(0)
+                .map_err(|e| AppError::Internal(format!("read candidate id: {e}")))?;
+            let marks = value_to_opt_f64(
+                row.get_value(1)
+                    .map_err(|e| AppError::Internal(format!("read candidate marks: {e}")))?,
+            )
+            .unwrap_or(1.0);
+            candidates.push((id, marks));
+        }
 
-    // Pick `want` at random. Reservoir sampling would be nicer for
-    // huge candidate sets, but the biggest topic bucket in the db
-    // right now is ~500 rows — a Fisher-Yates shuffle on that is
-    // cheap.
-    //
-    // Scope the RNG so it's dropped before any await — `ThreadRng` is
-    // `!Send`, which would otherwise make the whole Future !Send and
-    // break axum's Handler bound.
-    let taken: Vec<i64> = {
+        if candidates.is_empty() {
+            return Err(AppError::BadRequest(
+                "no questions matched the requested filters".into(),
+            ));
+        }
+
+        // Pick `want` at random. Reservoir sampling would be nicer for
+        // huge candidate sets, but the biggest topic bucket in the db
+        // right now is ~500 rows — a Fisher-Yates shuffle on that is
+        // cheap.
+        //
+        // Scope the RNG so it's dropped before any await — `ThreadRng` is
+        // `!Send`, which would otherwise make the whole Future !Send and
+        // break axum's Handler bound.
         use rand::seq::SliceRandom;
         let mut rng = rand::thread_rng();
-        candidate_ids.shuffle(&mut rng);
-        candidate_ids.into_iter().take(want).collect()
+        candidates.shuffle(&mut rng);
+        candidates.into_iter().take(want).collect()
     };
+    let max_marks: f64 = taken.iter().map(|(_, m)| m).sum();
 
     // Insert the mock_tests row. We do NOT store the question_ids
     // list on this row — resume-later uses a `test_questions` join
@@ -300,8 +388,8 @@ pub async fn create_test(
     let now = Utc::now().to_rfc3339();
     let insert_sql = "INSERT INTO mock_tests \
                           (started_at, total_questions, max_score, status, \
-                           test_mode, negative_ratio, user_id) \
-                      VALUES (?1, ?2, ?3, 'in_progress', ?4, ?5, ?6) \
+                           test_mode, negative_ratio, user_id, paper) \
+                      VALUES (?1, ?2, ?3, 'in_progress', ?4, ?5, ?6, ?7) \
                       RETURNING id";
     let mut rows = state
         .db
@@ -311,10 +399,11 @@ pub async fn create_test(
             params![
                 now.clone(),
                 taken.len() as i64,
-                taken.len() as i64,
+                max_marks.round() as i64,
                 test_mode.clone(),
                 negative_ratio,
                 auth.id,
+                paper_code.clone(),
             ],
         )
         .await?;
@@ -332,7 +421,7 @@ pub async fn create_test(
     // INSERT OR IGNORE + a UNIQUE(test_id, question_id) index — but that
     // unique index only exists after Phase-5 migration, so we defensively
     // catch duplicate inserts.
-    for qid in &taken {
+    for (qid, _) in &taken {
         let _ = state
             .db
             .conn()
@@ -348,7 +437,7 @@ pub async fn create_test(
 
     Ok(Json(CreateTestResponse {
         test_id,
-        question_ids: taken,
+        question_ids: taken.iter().map(|(id, _)| *id).collect(),
         test_mode,
         negative_ratio,
     }))
@@ -370,7 +459,9 @@ pub async fn get_test(
     let q_sql = "SELECT tr.id, tr.question_id, q.question_text, \
                         q.option_a, q.option_b, q.option_c, q.option_d, \
                         tr.selected_option, tr.marked_for_review, \
-                        tr.visit_count, tr.time_spent_sec \
+                        tr.visit_count, tr.time_spent_sec, \
+                        q.qtype, COALESCE(q.marks, 1), q.image_url, \
+                        q.paper_section, q.q_number, tr.confidence, tr.note \
                  FROM test_responses tr \
                  JOIN questions q ON q.id = tr.question_id \
                  WHERE tr.test_id = ?1 AND tr.user_id = ?2 \
@@ -411,6 +502,32 @@ pub async fn get_test(
                     .map_err(|e| AppError::Internal(format!("read option_d: {e}")))?,
             ),
             order_index: idx,
+            qtype: QType::parse(
+                value_to_opt_string(
+                    row.get_value(11)
+                        .map_err(|e| AppError::Internal(format!("read qtype: {e}")))?,
+                )
+                .as_deref(),
+            )
+            .as_str()
+            .to_string(),
+            marks: value_to_opt_f64(
+                row.get_value(12)
+                    .map_err(|e| AppError::Internal(format!("read marks: {e}")))?,
+            )
+            .unwrap_or(1.0),
+            image_url: value_to_opt_string(
+                row.get_value(13)
+                    .map_err(|e| AppError::Internal(format!("read image_url: {e}")))?,
+            ),
+            paper_section: value_to_opt_string(
+                row.get_value(14)
+                    .map_err(|e| AppError::Internal(format!("read paper_section: {e}")))?,
+            ),
+            q_number: value_to_opt_i64(
+                row.get_value(15)
+                    .map_err(|e| AppError::Internal(format!("read q_number: {e}")))?,
+            ),
         });
         let selected = value_to_opt_string(
             row.get_value(7)
@@ -429,12 +546,24 @@ pub async fn get_test(
             row.get_value(10)
                 .map_err(|e| AppError::Internal(format!("read time_spent_sec: {e}")))?,
         );
+        // Legacy rows carry the column default 'medium' — not a real pick.
+        let confidence = value_to_opt_string(
+            row.get_value(16)
+                .map_err(|e| AppError::Internal(format!("read confidence: {e}")))?,
+        )
+        .filter(|c| matches!(c.as_str(), "sure" | "unsure" | "guess"));
+        let note = value_to_opt_string(
+            row.get_value(17)
+                .map_err(|e| AppError::Internal(format!("read note: {e}")))?,
+        );
         responses.push(TestResponseSnapshot {
             question_id: qid,
             selected_option: selected,
             marked_for_review: marked,
             visit_count: visits,
             time_spent_sec: time,
+            confidence,
+            note,
         });
         idx += 1;
     }
@@ -447,6 +576,7 @@ pub async fn get_test(
         questions,
         responses,
         status: test.status.clone().unwrap_or_else(|| "in_progress".into()),
+        paper_code: test.paper.clone().filter(|p| is_paper_code(p)),
     }))
 }
 
@@ -483,10 +613,8 @@ pub async fn submit_answer(
         )
         .await?;
     let existing = rows.next().await?;
-    let selected = match req.selected_option.as_deref() {
-        Some(s) => Some(validate_option(s)?),
-        None => None,
-    };
+    let confidence = validate_confidence(req.confidence.as_deref())?;
+    let note = clean_note(req.note.as_deref())?;
 
     // Look up correctness against the questions table so results can
     // read is_correct without a second join (Flask ran this at finish
@@ -495,30 +623,35 @@ pub async fn submit_answer(
         .db
         .conn()
         .query(
-            "SELECT correct_option, topic_id FROM questions WHERE id = ?1 LIMIT 1",
+            "SELECT correct_option, qtype FROM questions WHERE id = ?1 LIMIT 1",
             params![req.question_id],
         )
         .await?;
-    let (correct_opt, _topic_id): (Option<String>, Option<i64>) = match crow.next().await? {
+    let (correct_opt, qtype): (Option<String>, QType) = match crow.next().await? {
         Some(r) => (
             value_to_opt_string(
                 r.get_value(0)
                     .map_err(|e| AppError::Internal(format!("read q.correct_option: {e}")))?,
             ),
-            value_to_opt_i64(
-                r.get_value(1)
-                    .map_err(|e| AppError::Internal(format!("read q.topic_id: {e}")))?,
+            QType::parse(
+                value_to_opt_string(
+                    r.get_value(1)
+                        .map_err(|e| AppError::Internal(format!("read q.qtype: {e}")))?,
+                )
+                .as_deref(),
             ),
         ),
         None => return Err(AppError::NotFound("question")),
     };
-    let is_correct = match (selected.as_deref(), correct_opt.as_deref()) {
-        (Some(s), Some(c)) => s == c,
-        _ => false,
+    let selected = match req.selected_option.as_deref() {
+        Some(s) => grading::normalize_response(qtype, s).map_err(AppError::BadRequest)?,
+        None => None,
     };
+    let is_correct = grading::is_correct(qtype, correct_opt.as_deref(), selected.as_deref());
 
     let marked_int: i64 = if req.marked_for_review { 1 } else { 0 };
     let correct_int: i64 = if is_correct { 1 } else { 0 };
+    let answered_at = selected.as_ref().map(|_| Utc::now().to_rfc3339());
 
     if existing.is_some() {
         // Update the row + bump visit_count.
@@ -529,7 +662,9 @@ pub async fn submit_answer(
                 "UPDATE test_responses \
                  SET selected_option = ?1, is_correct = ?2, \
                      time_spent_sec = ?3, marked_for_review = ?4, \
-                     visit_count = COALESCE(visit_count, 0) + 1 \
+                     visit_count = COALESCE(visit_count, 0) + 1, \
+                     confidence = ?8, note = ?9, \
+                     answered_at = COALESCE(?10, answered_at) \
                  WHERE test_id = ?5 AND user_id = ?6 AND question_id = ?7",
                 params![
                     selected.clone(),
@@ -539,6 +674,9 @@ pub async fn submit_answer(
                     test.id,
                     auth.id,
                     req.question_id,
+                    confidence.clone(),
+                    note.clone(),
+                    answered_at.clone(),
                 ],
             )
             .await?;
@@ -552,8 +690,9 @@ pub async fn submit_answer(
             .execute(
                 "INSERT INTO test_responses \
                     (test_id, question_id, user_id, selected_option, \
-                     is_correct, time_spent_sec, marked_for_review, visit_count) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)",
+                     is_correct, time_spent_sec, marked_for_review, visit_count, \
+                     confidence, note, answered_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8, ?9, ?10)",
                 params![
                     test.id,
                     req.question_id,
@@ -562,6 +701,9 @@ pub async fn submit_answer(
                     correct_int,
                     req.time_spent_sec,
                     marked_int,
+                    confidence,
+                    note,
+                    answered_at,
                 ],
             )
             .await?;
@@ -642,23 +784,13 @@ async fn finish_impl(
 
     // Fast-path: already completed → return the persisted numbers.
     if test.status.as_deref() == Some("completed") {
-        let breakdown = load_topic_breakdown(state, auth, test.id).await?;
-        return Ok(FinishResponse {
-            test_id: test.id,
-            correct: correct_from(&test),
-            wrong: test.wrong_count.unwrap_or(0),
-            unanswered: test.unanswered_count.unwrap_or(0),
-            score_pct: test.score.unwrap_or(0.0),
-            raw_marks: test.raw_marks.unwrap_or(0.0),
-            negative_ratio: test.negative_ratio.unwrap_or(0.0),
-            breakdown_by_topic: breakdown,
-        });
+        return persisted_finish(state, auth, &test).await;
     }
 
     // Pull every response + question + topic in one shot.
-    let sql = "SELECT tr.question_id, tr.selected_option, tr.is_correct, \
-                      tr.time_spent_sec, q.correct_option, q.topic_id, \
-                      t.name AS topic_name \
+    let sql = "SELECT tr.question_id, tr.selected_option, tr.time_spent_sec, \
+                      q.correct_option, q.topic_id, t.name AS topic_name, \
+                      q.qtype, COALESCE(q.marks, 1), q.neg_marks, tr.confidence \
                FROM test_responses tr \
                JOIN questions q ON q.id = tr.question_id \
                LEFT JOIN topics t ON t.id = q.topic_id \
@@ -678,76 +810,117 @@ async fn finish_impl(
         time_spent_sec: Option<f64>,
         topic_id: Option<i64>,
         topic_name: Option<String>,
+        qtype: QType,
+        marks: f64,
+        neg_marks: Option<f64>,
+        confidence: Option<String>,
+    }
+    impl Resp {
+        fn answered(&self) -> bool {
+            matches!(self.selected.as_deref(), Some(s) if !s.is_empty())
+        }
+        fn correct(&self) -> bool {
+            grading::is_correct(self.qtype, self.correct_opt.as_deref(), self.selected.as_deref())
+        }
     }
     let mut all: Vec<Resp> = Vec::new();
     while let Some(row) = rows.next().await? {
-        let qid: i64 = row
-            .get::<i64>(0)
-            .map_err(|e| AppError::Internal(format!("finish: read qid: {e}")))?;
-        let sel = value_to_opt_string(
-            row.get_value(1)
-                .map_err(|e| AppError::Internal(format!("finish: read selected: {e}")))?,
-        );
-        // is_correct at index 2 is a snapshot; we re-derive from
-        // (selected, correct_opt) below to catch any drift.
-        let _existing_correct = value_to_opt_i64(
-            row.get_value(2)
-                .map_err(|e| AppError::Internal(format!("finish: read is_correct: {e}")))?,
-        );
-        let time = value_to_opt_f64(
-            row.get_value(3)
-                .map_err(|e| AppError::Internal(format!("finish: read time_spent_sec: {e}")))?,
-        );
-        let correct_opt = value_to_opt_string(
-            row.get_value(4)
-                .map_err(|e| AppError::Internal(format!("finish: read q.correct_option: {e}")))?,
-        );
-        let topic_id = value_to_opt_i64(
-            row.get_value(5)
-                .map_err(|e| AppError::Internal(format!("finish: read q.topic_id: {e}")))?,
-        );
-        let topic_name = value_to_opt_string(
-            row.get_value(6)
-                .map_err(|e| AppError::Internal(format!("finish: read topic_name: {e}")))?,
-        );
+        let get = |i: i32| {
+            row.get_value(i)
+                .map_err(|e| AppError::Internal(format!("finish: read col {i}: {e}")))
+        };
         all.push(Resp {
-            question_id: qid,
-            selected: sel,
-            correct_opt,
-            time_spent_sec: time,
-            topic_id,
-            topic_name,
+            question_id: row
+                .get::<i64>(0)
+                .map_err(|e| AppError::Internal(format!("finish: read qid: {e}")))?,
+            selected: value_to_opt_string(get(1)?),
+            time_spent_sec: value_to_opt_f64(get(2)?),
+            correct_opt: value_to_opt_string(get(3)?),
+            topic_id: value_to_opt_i64(get(4)?),
+            topic_name: value_to_opt_string(get(5)?),
+            qtype: QType::parse(value_to_opt_string(get(6)?).as_deref()),
+            marks: value_to_opt_f64(get(7)?).unwrap_or(1.0),
+            neg_marks: value_to_opt_f64(get(8)?),
+            confidence: value_to_opt_string(get(9)?),
         });
     }
 
-    let total = all.len() as i64;
+    let test_mode = test.test_mode.clone().unwrap_or_else(|| "practice".into());
+    let exam_mode = test_mode == "exam";
+    let stored_ratio = test.negative_ratio.unwrap_or(0.0);
+    let effective_ratio = if exam_mode { stored_ratio } else { 0.0 };
+
     let mut correct: i64 = 0;
     let mut wrong: i64 = 0;
     let mut unanswered: i64 = 0;
     let mut time_taken: f64 = 0.0;
+    let mut raw_marks: f64 = 0.0;
+    let mut max_marks: f64 = 0.0;
+    // (question_id, is_correct, marks_awarded) — written back below.
+    let mut graded: Vec<(i64, bool, f64)> = Vec::with_capacity(all.len());
 
     for r in &all {
         time_taken += r.time_spent_sec.unwrap_or(0.0);
-        match (r.selected.as_deref(), r.correct_opt.as_deref()) {
-            (None, _) | (Some(""), _) => unanswered += 1,
-            (Some(s), Some(c)) if s == c => correct += 1,
-            (Some(_), _) => wrong += 1,
+        max_marks += r.marks;
+        let answered = r.answered();
+        let is_correct = answered && r.correct();
+        if !answered {
+            unanswered += 1;
+        } else if is_correct {
+            correct += 1;
+        } else {
+            wrong += 1;
         }
+        let awarded = grading::marks_for(
+            r.qtype,
+            answered,
+            is_correct,
+            r.marks,
+            r.neg_marks,
+            effective_ratio,
+            exam_mode,
+        );
+        raw_marks += awarded;
+        graded.push((r.question_id, is_correct, awarded));
     }
 
-    let test_mode = test.test_mode.clone().unwrap_or_else(|| "practice".into());
-    let stored_ratio = test.negative_ratio.unwrap_or(0.0);
-    let effective_ratio = if test_mode == "exam" { stored_ratio } else { 0.0 };
-    let raw_marks = correct as f64 - (wrong as f64) * effective_ratio;
     // Edge cases:
-    //   * total == 0  → score_pct = 0 (avoid divide-by-zero).
-    //   * All unanswered → correct = 0, wrong = 0 → raw_marks = 0 → score_pct = 0.
-    //   * Practice mode → effective_ratio = 0, so raw = correct.
-    let score_pct = if total > 0 {
-        (raw_marks.max(0.0) / total as f64) * 100.0
+    //   * max_marks == 0 → score_pct = 0 (avoid divide-by-zero).
+    //   * All unanswered → raw_marks = 0 → score_pct = 0.
+    //   * Practice mode → no deductions, so raw = marks earned.
+    let score_pct = if max_marks > 0.0 {
+        (raw_marks.max(0.0) / max_marks) * 100.0
     } else {
         0.0
     };
+
+    // Write the graded result onto each response row first, so a crash
+    // before the 'completed' stamp just re-runs this idempotently.
+    // One statement per 50 rows keeps the Turso round-trips down.
+    for chunk in graded.chunks(50) {
+        let mut sql = String::from("UPDATE test_responses SET is_correct = CASE question_id");
+        let mut vals: Vec<libsql::Value> = Vec::new();
+        for (qid, ok, _) in chunk {
+            sql.push_str(" WHEN ? THEN ?");
+            vals.push(libsql::Value::Integer(*qid));
+            vals.push(libsql::Value::Integer(i64::from(*ok)));
+        }
+        sql.push_str(" END, marks_awarded = CASE question_id");
+        for (qid, _, awarded) in chunk {
+            sql.push_str(" WHEN ? THEN ?");
+            vals.push(libsql::Value::Integer(*qid));
+            vals.push(libsql::Value::Real(round2(*awarded)));
+        }
+        sql.push_str(" END WHERE test_id = ? AND user_id = ? AND question_id IN (");
+        sql.push_str(&vec!["?"; chunk.len()].join(","));
+        sql.push(')');
+        vals.push(libsql::Value::Integer(test.id));
+        vals.push(libsql::Value::Integer(auth.id));
+        for (qid, _, _) in chunk {
+            vals.push(libsql::Value::Integer(*qid));
+        }
+        state.db.conn().execute(&sql, vals).await?;
+    }
 
     // Persist to mock_tests. We save the rounded value for `score` to
     // match Flask (`round(..., 1)`); the raw value is kept two decimal
@@ -786,17 +959,7 @@ async fn finish_impl(
         // Racing peer finished first — read back the persisted values
         // and return them, mirroring the idempotent fast-path above.
         let test = load_test_for_user(state, test.id, auth.id).await?;
-        let breakdown = load_topic_breakdown(state, auth, test.id).await?;
-        return Ok(FinishResponse {
-            test_id: test.id,
-            correct: correct_from(&test),
-            wrong: test.wrong_count.unwrap_or(0),
-            unanswered: test.unanswered_count.unwrap_or(0),
-            score_pct: test.score.unwrap_or(0.0),
-            raw_marks: test.raw_marks.unwrap_or(0.0),
-            negative_ratio: test.negative_ratio.unwrap_or(0.0),
-            breakdown_by_topic: breakdown,
-        });
+        return persisted_finish(state, auth, &test).await;
     }
 
     // Update in-memory copy so return-path uses fresh values.
@@ -813,15 +976,10 @@ async fn finish_impl(
     // safe to call on a re-finish (idempotent seed).
     let (sr_box, sr_due) = sr::initial_box_and_due();
     for r in &all {
-        let is_wrong = match (r.selected.as_deref(), r.correct_opt.as_deref()) {
-            (Some(""), _) | (None, _) => false, // unanswered ≠ wrong
-            (Some(s), Some(c)) => s != c,
-            _ => false,
-        };
-        if !is_wrong {
-            continue;
+        if !r.answered() || r.correct() {
+            continue; // unanswered ≠ wrong
         }
-        let error_type = classify_error(r.time_spent_sec);
+        let error_type = classify_error(r.time_spent_sec, r.confidence.as_deref());
         state
             .db
             .conn()
@@ -854,11 +1012,7 @@ async fn finish_impl(
         let Some(tid) = r.topic_id else { continue };
         let entry = per_topic.entry(tid).or_insert((0, 0));
         entry.1 += 1;
-        let is_correct = match (r.selected.as_deref(), r.correct_opt.as_deref()) {
-            (Some(s), Some(c)) => s == c,
-            _ => false,
-        };
-        if is_correct {
+        if r.answered() && r.correct() {
             entry.0 += 1;
         }
     }
@@ -872,13 +1026,7 @@ async fn finish_impl(
 
     let triples: Vec<(Option<i64>, Option<String>, bool)> = all
         .iter()
-        .map(|r| {
-            let is_correct = match (r.selected.as_deref(), r.correct_opt.as_deref()) {
-                (Some(s), Some(c)) => s == c,
-                _ => false,
-            };
-            (r.topic_id, r.topic_name.clone(), is_correct)
-        })
+        .map(|r| (r.topic_id, r.topic_name.clone(), r.answered() && r.correct()))
         .collect();
     let breakdown = breakdown_from_triples(&triples);
     Ok(FinishResponse {
@@ -888,7 +1036,30 @@ async fn finish_impl(
         unanswered,
         score_pct: score_pct_rounded,
         raw_marks: raw_marks_rounded,
+        max_marks: round2(max_marks),
         negative_ratio: effective_ratio,
+        breakdown_by_topic: breakdown,
+    })
+}
+
+/// The finish payload for a test that is already completed.
+async fn persisted_finish(
+    state: &AppState,
+    auth: &AuthUser,
+    test: &TestRow,
+) -> Result<FinishResponse, AppError> {
+    let breakdown = load_topic_breakdown(state, auth, test.id).await?;
+    Ok(FinishResponse {
+        test_id: test.id,
+        correct: correct_from(test),
+        wrong: test.wrong_count.unwrap_or(0),
+        unanswered: test.unanswered_count.unwrap_or(0),
+        score_pct: test.score.unwrap_or(0.0),
+        raw_marks: test.raw_marks.unwrap_or(0.0),
+        max_marks: test
+            .max_score
+            .unwrap_or(test.total_questions.unwrap_or(0) as f64),
+        negative_ratio: test.negative_ratio.unwrap_or(0.0),
         breakdown_by_topic: breakdown,
     })
 }
@@ -910,8 +1081,13 @@ fn round2(x: f64) -> f64 {
     (x * 100.0).round() / 100.0
 }
 
-/// Cheap error-type heuristic (matches `bp_tests.py::finish`).
-fn classify_error(time_spent_sec: Option<f64>) -> &'static str {
+/// Cheap error-type heuristic (matches `bp_tests.py::finish`), plus a
+/// "guess" bucket when the student marked the answer as a guess. The real
+/// diagnosis happens in the tutor review; this is only a first sort.
+fn classify_error(time_spent_sec: Option<f64>, confidence: Option<&str>) -> &'static str {
+    if confidence == Some("guess") {
+        return "guess";
+    }
     match time_spent_sec {
         Some(t) if t < 10.0 => "time_pressure",
         _ => "concept_gap",
@@ -1041,7 +1217,9 @@ async fn load_topic_breakdown(
     auth: &AuthUser,
     test_id: i64,
 ) -> Result<Vec<TopicBreakdownRow>, AppError> {
-    let sql = "SELECT tr.selected_option, q.correct_option, q.topic_id, t.name \
+    // `is_correct` is graded per question type at submit and re-graded at
+    // finish, so it is the single source of truth here.
+    let sql = "SELECT tr.is_correct, q.topic_id, t.name \
                FROM test_responses tr \
                JOIN questions q ON q.id = tr.question_id \
                LEFT JOIN topics t ON t.id = q.topic_id \
@@ -1060,29 +1238,23 @@ async fn load_topic_breakdown(
     }
     let mut map: HashMap<Option<i64>, Agg> = HashMap::new();
     while let Some(row) = rows.next().await? {
-        let sel = value_to_opt_string(
+        let is_correct = int_to_bool(value_to_opt_i64(
             row.get_value(0)
-                .map_err(|e| AppError::Internal(format!("read breakdown selected: {e}")))?,
-        );
-        let correct = value_to_opt_string(
-            row.get_value(1)
-                .map_err(|e| AppError::Internal(format!("read breakdown correct: {e}")))?,
-        );
+                .map_err(|e| AppError::Internal(format!("read breakdown is_correct: {e}")))?,
+        ));
         let topic_id = value_to_opt_i64(
-            row.get_value(2)
+            row.get_value(1)
                 .map_err(|e| AppError::Internal(format!("read breakdown topic_id: {e}")))?,
         );
         let tname = value_to_opt_string(
-            row.get_value(3)
+            row.get_value(2)
                 .map_err(|e| AppError::Internal(format!("read breakdown topic_name: {e}")))?,
         );
         let entry = map.entry(topic_id).or_default();
         entry.name = tname.or(entry.name.clone());
         entry.total += 1;
-        if let (Some(s), Some(c)) = (sel.as_deref(), correct.as_deref()) {
-            if s == c {
-                entry.correct += 1;
-            }
+        if is_correct {
+            entry.correct += 1;
         }
     }
 
@@ -1185,7 +1357,9 @@ pub async fn get_results(
     // Per-question breakdown for the review UI.
     let sql = "SELECT tr.question_id, q.question_text, tr.selected_option, \
                       q.correct_option, q.explanation, tr.time_spent_sec, \
-                      t.name AS topic_name \
+                      t.name AS topic_name, q.option_a, q.option_b, q.option_c, \
+                      q.option_d, q.qtype, COALESCE(q.marks, 1), tr.marks_awarded, \
+                      q.image_url, q.paper_section, q.q_number, tr.confidence, tr.note \
                FROM test_responses tr \
                JOIN questions q ON q.id = tr.question_id \
                LEFT JOIN topics t ON t.id = q.topic_id \
@@ -1198,50 +1372,114 @@ pub async fn get_results(
         .await?;
     let mut questions: Vec<ResultsQuestionRow> = Vec::new();
     while let Some(row) = rows.next().await? {
+        let get = |i: i32| {
+            row.get_value(i)
+                .map_err(|e| AppError::Internal(format!("results: read col {i}: {e}")))
+        };
         let qid: i64 = row
             .get::<i64>(0)
             .map_err(|e| AppError::Internal(format!("results: read qid: {e}")))?;
-        let q_text = value_to_opt_string(
-            row.get_value(1)
-                .map_err(|e| AppError::Internal(format!("results: read q_text: {e}")))?,
-        );
-        let selected = value_to_opt_string(
-            row.get_value(2)
-                .map_err(|e| AppError::Internal(format!("results: read selected: {e}")))?,
-        );
-        let correct = value_to_opt_string(
-            row.get_value(3)
-                .map_err(|e| AppError::Internal(format!("results: read correct: {e}")))?,
-        );
-        let explanation = value_to_opt_string(
-            row.get_value(4)
-                .map_err(|e| AppError::Internal(format!("results: read explanation: {e}")))?,
-        );
-        let time = value_to_opt_f64(
-            row.get_value(5)
-                .map_err(|e| AppError::Internal(format!("results: read time: {e}")))?,
-        );
-        let topic_name = value_to_opt_string(
-            row.get_value(6)
-                .map_err(|e| AppError::Internal(format!("results: read topic_name: {e}")))?,
-        );
-        let is_correct = match (selected.as_deref(), correct.as_deref()) {
-            (Some(s), Some(c)) => s == c,
-            _ => false,
-        };
+        let selected = value_to_opt_string(get(2)?);
+        let correct = value_to_opt_string(get(3)?);
+        let qtype = QType::parse(value_to_opt_string(get(11)?).as_deref());
+        let is_correct = grading::is_correct(qtype, correct.as_deref(), selected.as_deref());
         questions.push(ResultsQuestionRow {
             question_id: qid,
-            question_text: q_text,
+            question_text: value_to_opt_string(get(1)?),
             selected_option: selected,
             correct_option: correct,
             is_correct,
-            explanation,
-            time_spent_sec: time,
-            topic_name,
+            explanation: value_to_opt_string(get(4)?),
+            time_spent_sec: value_to_opt_f64(get(5)?),
+            topic_name: value_to_opt_string(get(6)?),
+            option_a: value_to_opt_string(get(7)?),
+            option_b: value_to_opt_string(get(8)?),
+            option_c: value_to_opt_string(get(9)?),
+            option_d: value_to_opt_string(get(10)?),
+            qtype: qtype.as_str().to_string(),
+            marks: value_to_opt_f64(get(12)?).unwrap_or(1.0),
+            marks_awarded: value_to_opt_f64(get(13)?),
+            image_url: value_to_opt_string(get(14)?),
+            paper_section: value_to_opt_string(get(15)?),
+            q_number: value_to_opt_i64(get(16)?),
+            confidence: value_to_opt_string(get(17)?)
+                .filter(|c| matches!(c.as_str(), "sure" | "unsure" | "guess")),
+            note: value_to_opt_string(get(18)?),
         });
     }
 
     Ok(Json(ResultsResponse { finish, questions }))
+}
+
+// ---------- PATCH /tests/{id}/responses/{question_id} --------------------
+
+/// Edit the note on one answer. Works on finished tests too: the
+/// reasoning behind a wrong answer is often written on the results page.
+pub async fn update_note(
+    State(state): State<AppState>,
+    RequireAuth(auth): RequireAuth,
+    Path((test_id, question_id)): Path<(i64, i64)>,
+    Json(req): Json<UpdateNoteRequest>,
+) -> Result<Json<SubmitAnswerResponse>, AppError> {
+    let test = load_test_for_user(&state, test_id, auth.id).await?;
+    let note = clean_note(req.note.as_deref())?;
+    let n = state
+        .db
+        .conn()
+        .execute(
+            "UPDATE test_responses SET note = ?1 \
+             WHERE test_id = ?2 AND user_id = ?3 AND question_id = ?4",
+            params![note, test.id, auth.id, question_id],
+        )
+        .await?;
+    if n == 0 {
+        return Err(AppError::NotFound("response"));
+    }
+    Ok(Json(SubmitAnswerResponse { status: "ok" }))
+}
+
+// ---------- GET /papers ---------------------------------------------------
+
+/// Full papers available for paper-mode tests (e.g. official GATE papers).
+pub async fn list_papers(
+    State(state): State<AppState>,
+    RequireAuth(_auth): RequireAuth,
+) -> Result<Json<PapersResponse>, AppError> {
+    let mut rows = state
+        .db
+        .conn()
+        .query(
+            "SELECT paper_code, COUNT(*), SUM(COALESCE(marks, 1)), \
+                    GROUP_CONCAT(DISTINCT paper_section) \
+             FROM questions \
+             WHERE paper_code IS NOT NULL AND paper_code <> '' \
+               AND (disabled = 0 OR disabled IS NULL) \
+             GROUP BY paper_code ORDER BY paper_code",
+            (),
+        )
+        .await?;
+    let mut papers = Vec::new();
+    while let Some(row) = rows.next().await? {
+        let get = |i: i32| {
+            row.get_value(i)
+                .map_err(|e| AppError::Internal(format!("papers: read col {i}: {e}")))
+        };
+        let Some(code) = value_to_opt_string(get(0)?) else { continue };
+        let mut sections: Vec<String> = value_to_opt_string(get(3)?)
+            .unwrap_or_default()
+            .split(',')
+            .filter(|x| !x.is_empty())
+            .map(str::to_string)
+            .collect();
+        sections.sort();
+        papers.push(PaperSummary {
+            paper_code: code,
+            question_count: value_to_opt_i64(get(1)?).unwrap_or(0),
+            max_marks: value_to_opt_f64(get(2)?).unwrap_or(0.0),
+            sections,
+        });
+    }
+    Ok(Json(PapersResponse { papers }))
 }
 
 // ---------- GET /tests (history) ------------------------------------------
@@ -1280,7 +1518,7 @@ pub async fn list_tests(
     let sql = format!(
         "SELECT id, test_mode, status, total_questions, score, raw_marks, \
                 wrong_count, unanswered_count, negative_ratio, started_at, \
-                completed_at, time_taken_sec \
+                completed_at, time_taken_sec, paper \
          FROM mock_tests \
          WHERE {where_sql} \
          ORDER BY id DESC \
@@ -1338,6 +1576,11 @@ pub async fn list_tests(
             row.get_value(11)
                 .map_err(|e| AppError::Internal(format!("list: read time_taken: {e}")))?,
         );
+        let paper_code = value_to_opt_string(
+            row.get_value(12)
+                .map_err(|e| AppError::Internal(format!("list: read paper: {e}")))?,
+        )
+        .filter(|p| is_paper_code(p));
         let grade = status
             .as_deref()
             .filter(|s| *s == "completed")
@@ -1356,6 +1599,7 @@ pub async fn list_tests(
             completed_at: completed,
             time_taken_sec: time_taken,
             computed_grade: grade,
+            paper_code,
         });
     }
     let last_id = items.last().map(|it| it.id);

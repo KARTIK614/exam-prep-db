@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ChevronDown, ChevronRight, Clock, X, Zap } from 'lucide-react';
+import { ChevronDown, ChevronRight, Clock, FileText, X, Zap } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -18,7 +18,8 @@ import {
   useExamPresets,
   type ExamPreset,
 } from '@/lib/api/presets';
-import { useCreateTest } from '@/lib/api/tests';
+import { useCreateTest, usePapers } from '@/lib/api/tests';
+import type { PaperSummary } from '@/lib/api/types';
 import { useTopics } from '@/lib/api/topics';
 import { ApiError } from '@/lib/api/types';
 import type { CreateTestRequest } from '@/lib/api/types';
@@ -40,6 +41,7 @@ export default function TestSetup() {
   const [params] = useSearchParams();
   const topics = useTopics();
   const createTest = useCreateTest();
+  const papers = usePapers();
 
   // Prefill topics from ?topic_id=…
   const prefilled = useMemo(() => {
@@ -164,14 +166,67 @@ export default function TestSetup() {
     }
   };
 
+  const startPaper = async (paper: PaperSummary) => {
+    setFormError(null);
+    try {
+      const res = await createTest.mutateAsync({
+        topic_ids: [],
+        question_count: paper.question_count,
+        test_mode: 'exam',
+        paper_code: paper.paper_code,
+      });
+      navigate(`/test/${res.test_id}`);
+    } catch (err) {
+      setFormError(err instanceof ApiError ? err.message : 'Failed to start the paper. Please try again.');
+    }
+  };
+
   return (
     <div className="mx-auto max-w-3xl space-y-4 pb-16">
       <div>
         <h1 className="text-2xl font-semibold">Start a test</h1>
         <p className="text-sm text-muted-foreground">
-          Pick a preset bundle below, or customise your own.
+          Sit a full paper, pick a preset bundle, or customise your own.
         </p>
       </div>
+
+      {papers.data && papers.data.papers.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <FileText className="h-4 w-4" /> Full papers
+            </CardTitle>
+            <CardDescription>
+              Official papers in their original order, with exam marking: −1/3 of the marks for a
+              wrong single-answer question, nothing off for multiple-correct or numerical. Pause any
+              time; the clock runs in 50-minute blocks with a 10-minute break.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {papers.data.papers.map((p) => (
+              <div
+                key={p.paper_code}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border p-3"
+              >
+                <div>
+                  <div className="font-medium">{paperLabel(p.paper_code)}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {p.question_count} questions · {p.max_marks} marks
+                    {p.sections.length ? ` · ${p.sections.join(' + ')}` : ''}
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() => startPaper(p)}
+                  disabled={createTest.isPending}
+                >
+                  Start paper
+                </Button>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
 
       {/* Preset picker — Sujit feedback: one-click exam bundles */}
       <Card>
@@ -539,6 +594,13 @@ export default function TestSetup() {
       </form>
     </div>
   );
+}
+
+/** "GATE2024_CS_S1" → "GATE 2024 · CS · Set 1". */
+function paperLabel(code: string): string {
+  const m = /^([A-Z]+)(\d{4})_([A-Z]+)(?:_S(\d))?$/.exec(code);
+  if (!m) return code.replace(/_/g, ' ');
+  return `${m[1]} ${m[2]} · ${m[3]}${m[4] ? ` · Set ${m[4]}` : ''}`;
 }
 
 function RadioButton({
